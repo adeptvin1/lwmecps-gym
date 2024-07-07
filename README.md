@@ -1,6 +1,11 @@
 # lwmecps-gym
 
 LWMECPS-gym is a collection of [OpenAI Gym](https://github.com/openai/gym) environments for reinforcement learning-based trading algorithms.
+
+## Description
+
+Данный репозиторий используется для создания окружения Kubernetes кластера и отработки использования RL в задачах опитимизации размещения вычислительных сервисов в геораспределенных узлах обработки данных (т.е k8s размазанный по условному городу, где сеть сотовой связи является транспортной).
+
 ## Installation
 
 ### From Repository
