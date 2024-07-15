@@ -21,4 +21,9 @@ pip install -e .
 
 ### Action
 
-https://gymnasium.farama.org/api/spaces/composite/
+
+## Resources
+
+`https://www.comet.com/docs/v2/guides/quickstart/` - Интересная штука для визализации обучения
+`https://gymnasium.farama.org/api/spaces/composite/` - Документация по Gymnasium
+
