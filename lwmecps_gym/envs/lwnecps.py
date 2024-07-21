@@ -29,7 +29,8 @@ class LWMECPSEnv(gym.Env):
                         'tx_bandwidth': spaces.Box(low=0, high=self.max_hardware['tx_bandwidth'], shape=(), dtype=np.float32),
                         'rx_bandwidth': spaces.Box(low=0, high=self.max_hardware['rx_bandwidth'], shape=(), dtype=np.float32),
                         'read_disks_bandwidth': spaces.Box(low=0, high=self.max_hardware['read_disks_bandwidth'], shape=(), dtype=np.float32),
-                        'write_disks_bandwidth': spaces.Box(low=0, high=self.max_hardware['write_disks_bandwidth'], shape=(), dtype=np.float32)
+                        'write_disks_bandwidth': spaces.Box(low=0, high=self.max_hardware['write_disks_bandwidth'], shape=(), dtype=np.float32),
+                        'avg_latency': spaces.Box(low=0, high=self.max_hardware['avg_latency'], shape=(), dtype=np.float32)
                     }
                 # Тут реализован цикл проходящий по именам нод и создающий словарь описания нод 
                 ) for node in self.node_name
@@ -47,7 +48,8 @@ class LWMECPSEnv(gym.Env):
                 'tx_bandwidth': self.node_info[node]['tx_bandwidth'],
                 'rx_bandwidth': self.node_info[node]['rx_bandwidth'],
                 'read_disks_bandwidth': self.node_info[node]['read_disks_bandwidth'],
-                'write_disks_bandwidth': self.node_info[node]['write_disks_bandwidth']
+                'write_disks_bandwidth': self.node_info[node]['write_disks_bandwidth'],
+                'avg_latency': self.node_info[node]['avg_latency']
             } for node in self.node_name
             
         }
@@ -90,7 +92,7 @@ class LWMECPSEnv(gym.Env):
         return self.state, reward, done, info
 
     def render(self, mode='human'):
-        nodes_state = {node: {'cpu': self.state[node]['cpu'], 'ram': self.state[node]['ram'] } for node in self.node_name}
+        nodes_state = {node: {'cpu': self.state[node]['cpu'], 'ram': self.state[node]['ram'], 'avg_latency': self.state[node]['avg_latency'] } for node in self.node_name}
         print(f"Nodes: {nodes_state}, Pod Node: {self.state['pod_node']}")
 
 
@@ -111,7 +113,8 @@ max_hardware = {
     'tx_bandwidth': 1000,
     'rx_bandwidth': 1000,
     'read_disks_bandwidth': 500,
-    'write_disks_bandwidth': 500
+    'write_disks_bandwidth': 500,
+    'avg_latency': 300
 }
 pod_usage = {
     'cpu': 2,
@@ -129,7 +132,8 @@ node_info = {
         'tx_bandwidth': 100,
         'rx_bandwidth': 100,
         'read_disks_bandwidth': 300,
-        'write_disks_bandwidth': 300
+        'write_disks_bandwidth': 300,
+        'avg_latency': 10
     },
     'node1' : {
         'cpu': 1,
@@ -137,7 +141,8 @@ node_info = {
         'tx_bandwidth': 100,
         'rx_bandwidth': 100,
         'read_disks_bandwidth': 300,
-        'write_disks_bandwidth': 300
+        'write_disks_bandwidth': 300,
+        'avg_latency': 20
     },
     'node2' : {
         'cpu': 8,
@@ -145,7 +150,8 @@ node_info = {
         'tx_bandwidth': 100,
         'rx_bandwidth': 100,
         'read_disks_bandwidth': 300,
-        'write_disks_bandwidth': 300
+        'write_disks_bandwidth': 300,
+        'avg_latency': 10
     },
     'node3' : {
         'cpu': 2,
@@ -153,7 +159,8 @@ node_info = {
         'tx_bandwidth': 100,
         'rx_bandwidth': 100,
         'read_disks_bandwidth': 300,
-        'write_disks_bandwidth': 300
+        'write_disks_bandwidth': 300,
+        'avg_latency': 30
     },    
 }
 # Использование окружения
