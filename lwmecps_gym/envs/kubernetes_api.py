@@ -15,3 +15,6 @@ class k8s:
         for node in list_nodes.items:
             print(node.status.capacity)
         pass
+
+    def k8s_action():
+        pass
