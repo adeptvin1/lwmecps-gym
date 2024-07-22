@@ -1,7 +1,7 @@
 import gymnasium as gym
 from gymnasium import spaces
+from lwmecps_gym.envs.kubernetes_api import k8s
 import numpy as np
-from gymnasium.envs.registration import register
 
 class LWMECPSEnv(gym.Env):
 
@@ -98,82 +98,3 @@ class LWMECPSEnv(gym.Env):
 
     def close(self):
         pass
-
-
-
-
-register(
-    id='lwmecps-v0',
-    entry_point='__main__:LWMECPSEnv',
-)
-node_name = ['node0', 'node1', 'node2', 'node3']
-max_hardware = {
-    'cpu': 8,
-    'ram': 16,
-    'tx_bandwidth': 1000,
-    'rx_bandwidth': 1000,
-    'read_disks_bandwidth': 500,
-    'write_disks_bandwidth': 500,
-    'avg_latency': 300
-}
-pod_usage = {
-    'cpu': 2,
-    'ram': 4,
-    'tx_bandwidth': 20,
-    'rx_bandwidth': 80,
-    'read_disks_bandwidth': 100,
-    'write_disks_bandwidth': 100
-}
-
-node_info = {
-    'node0' : {
-        'cpu': 4,
-        'ram': 8,
-        'tx_bandwidth': 100,
-        'rx_bandwidth': 100,
-        'read_disks_bandwidth': 300,
-        'write_disks_bandwidth': 300,
-        'avg_latency': 10
-    },
-    'node1' : {
-        'cpu': 1,
-        'ram': 1,
-        'tx_bandwidth': 100,
-        'rx_bandwidth': 100,
-        'read_disks_bandwidth': 300,
-        'write_disks_bandwidth': 300,
-        'avg_latency': 20
-    },
-    'node2' : {
-        'cpu': 8,
-        'ram': 16,
-        'tx_bandwidth': 100,
-        'rx_bandwidth': 100,
-        'read_disks_bandwidth': 300,
-        'write_disks_bandwidth': 300,
-        'avg_latency': 10
-    },
-    'node3' : {
-        'cpu': 2,
-        'ram': 4,
-        'tx_bandwidth': 100,
-        'rx_bandwidth': 100,
-        'read_disks_bandwidth': 300,
-        'write_disks_bandwidth': 300,
-        'avg_latency': 30
-    },    
-}
-# Использование окружения
-env = gym.make('lwmecps-v0',num_nodes = len(node_name), node_name = node_name, max_hardware = max_hardware, pod_usage = pod_usage, node_info = node_info )
-
-
-for _ in range(5):
-    observation = env.reset()
-    done = False
-    while not done:
-        env.render()
-        print(env.action_space.sample())
-        action = env.action_space.sample()  # Случайное действие
-        observation, reward, done, info = env.step(action)
-
-env.close()
