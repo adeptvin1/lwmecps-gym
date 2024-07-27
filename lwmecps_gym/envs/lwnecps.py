@@ -5,13 +5,17 @@ import numpy as np
 
 class LWMECPSEnv(gym.Env):
 
-    def __init__(self, node_name , max_hardware, pod_usage, node_info, num_nodes):
+    def __init__(self, node_name , max_hardware, pod_usage, node_info, num_nodes, namespace, deployment_name):
         super(LWMECPSEnv, self).__init__()
         self.num_nodes = num_nodes
         self.node_name = node_name
         self.max_hardware = max_hardware
         self.pod_usage = pod_usage
         self.node_info = node_info
+        self.namespace = namespace
+        self.deployment_name = deployment_name
+
+        self.minikube = k8s()
 
         # self.render_mode = render_mode
         # self.window_size = window_size
@@ -54,6 +58,8 @@ class LWMECPSEnv(gym.Env):
             
         }
         self.state['pod_node'] = self.node_name[0]
+        
+        self.minikube.k8s_action(namespace=self.namespace, deployment_name=self.deployment_name, replicas=1, node=self.node_name[0])
 
         return self.state
     
@@ -66,6 +72,8 @@ class LWMECPSEnv(gym.Env):
         
         # Перемещение pod на новую ноду
         pod_node = self.node_name[action]
+        self.minikube.k8s_action(namespace=self.namespace, deployment_name=self.deployment_name, replicas=1, node=self.node_name[action])
+
         node_parameters = ['cpu', 'ram', 'tx_bandwidth', 'rx_bandwidth', 'read_disks_bandwidth', 'write_disks_bandwidth']
         # Освобождение ресурсов на текущей ноде
         for param in node_parameters:

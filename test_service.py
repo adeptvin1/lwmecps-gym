@@ -7,14 +7,6 @@ import re
 import time
 
 
-
-# for i in range(1):
-#     state = minikube.k8s_state()
-#     print(state)
-#     time.sleep(1)
-
-# minikube.k8s_action(namespace='default', deployment_name='time-server', replicas=3, node='minikube-m02')
-
 register(
     id='lwmecps-v0',
     entry_point='lwmecps_gym.envs:LWMECPSEnv',
@@ -64,7 +56,7 @@ for node in state:
     }
 
 # Использование окружения
-env = gym.make('lwmecps-v0',num_nodes = len(node_name), node_name = node_name, max_hardware = max_hardware, pod_usage = pod_usage, node_info = node_info )
+env = gym.make('lwmecps-v0',num_nodes = len(node_name), node_name = node_name, max_hardware = max_hardware, pod_usage = pod_usage, node_info = node_info, deployment_name = 'mec-test-app', namespace = 'default' )
 
 
 for _ in range(5):

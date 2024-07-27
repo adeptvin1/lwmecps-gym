@@ -1,5 +1,6 @@
 
 from kubernetes import client, config
+import time
 
 class k8s:
     def __init__(self, ) -> None:
@@ -32,4 +33,21 @@ class k8s:
             namespace=namespace,
             body=deployment
         )
+        time.sleep(2)
+        while True:
+            self.wait_for_deployment_to_be_ready(namespace, deployment_name)
+            break
         pass
+
+    def wait_for_deployment_to_be_ready(self, namespace, deployment_name):
+        while True:
+            deployment = self.app_api.read_namespaced_deployment(
+                name=deployment_name,
+                namespace=namespace
+            )
+            if deployment.status.ready_replicas == deployment.spec.replicas:
+                print("Deployment " + deployment_name + " is ready.")
+                break
+            else:
+                print("Waiting for deployment to be ready...")
+                time.sleep(5)  # Подождать 5 секунд перед следующей проверкой

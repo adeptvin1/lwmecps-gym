@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name:  mec-test-app
+  namespace: default
+  labels:
+    app:  mec-test-app
+spec:
+  selector:
+    matchLabels:
+      app: mec-test-app
+  replicas: 1
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app:  mec-test-app
+    spec:
+      containers:
+      - name:  mec-test-app
+        image:  traefik:latest
+        resources:
+          requests:
+            cpu: 100m
+            memory: 100Mi
+          limits:
+            cpu: 100m
+            memory: 100Mi
+        ports:
+        - containerPort:  80
+          name:  mec-test-app
+      restartPolicy: Always
