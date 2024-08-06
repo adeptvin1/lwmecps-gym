@@ -5,7 +5,7 @@ import numpy as np
 
 class LWMECPSEnv(gym.Env):
 
-    def __init__(self, node_name , max_hardware, pod_usage, node_info, num_nodes, namespace, deployment_name):
+    def __init__(self, node_name , max_hardware, pod_usage, node_info, num_nodes, namespace, deployment_name, deployments):
         super(LWMECPSEnv, self).__init__()
         self.num_nodes = num_nodes
         self.node_name = node_name
@@ -14,6 +14,7 @@ class LWMECPSEnv(gym.Env):
         self.node_info = node_info
         self.namespace = namespace
         self.deployment_name = deployment_name
+        self.deployments = deployments
 
         self.minikube = k8s()
 
@@ -34,7 +35,12 @@ class LWMECPSEnv(gym.Env):
                         'rx_bandwidth': spaces.Box(low=0, high=self.max_hardware['rx_bandwidth'], shape=(), dtype=np.float32),
                         'read_disks_bandwidth': spaces.Box(low=0, high=self.max_hardware['read_disks_bandwidth'], shape=(), dtype=np.float32),
                         'write_disks_bandwidth': spaces.Box(low=0, high=self.max_hardware['write_disks_bandwidth'], shape=(), dtype=np.float32),
-                        'avg_latency': spaces.Box(low=0, high=self.max_hardware['avg_latency'], shape=(), dtype=np.float32)
+                        'avg_latency': spaces.Box(low=0, high=self.max_hardware['avg_latency'], shape=(), dtype=np.float32),
+                        'deployments': spaces.Dict({
+                            deployment: spaces.Dict({
+                                'replicas': spaces.Box(low=0, high=10, shape=(), dtype=np.float32)
+                            }) for deployment in self.deployments
+                        })
                     }
                 # Тут реализован цикл проходящий по именам нод и создающий словарь описания нод 
                 ) for node in self.node_name
@@ -53,7 +59,12 @@ class LWMECPSEnv(gym.Env):
                 'rx_bandwidth': self.node_info[node]['rx_bandwidth'],
                 'read_disks_bandwidth': self.node_info[node]['read_disks_bandwidth'],
                 'write_disks_bandwidth': self.node_info[node]['write_disks_bandwidth'],
-                'avg_latency': self.node_info[node]['avg_latency']
+                'avg_latency': self.node_info[node]['avg_latency'],
+                'deployments': {
+                    deployment: {
+                        'replicas': 1  # Пример числового значения
+                    } for deployment in self.deployments
+                }
             } for node in self.node_name
             
         }
@@ -100,7 +111,7 @@ class LWMECPSEnv(gym.Env):
         return self.state, reward, done, info
 
     def render(self, mode='human'):
-        nodes_state = {node: {'cpu': self.state[node]['cpu'], 'ram': self.state[node]['ram'], 'avg_latency': self.state[node]['avg_latency'] } for node in self.node_name}
+        nodes_state = {node: {'cpu': self.state[node]['cpu'], 'ram': self.state[node]['ram'], 'avg_latency': self.state[node]['avg_latency'], 'deployments': self.state[node]['deployments']  } for node in self.node_name}
         print(f"Nodes: {nodes_state}, Pod Node: {self.state['pod_node']}")
 
 

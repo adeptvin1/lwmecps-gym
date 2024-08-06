@@ -56,7 +56,7 @@ for node in state:
     }
 
 # Использование окружения
-env = gym.make('lwmecps-v0',num_nodes = len(node_name), node_name = node_name, max_hardware = max_hardware, pod_usage = pod_usage, node_info = node_info, deployment_name = 'mec-test-app', namespace = 'default' )
+env = gym.make('lwmecps-v0',num_nodes = len(node_name), node_name = node_name, max_hardware = max_hardware, pod_usage = pod_usage, node_info = node_info, deployment_name = 'mec-test-app', namespace = 'default', deployments = ['mec-test-app'] )
 
 
 for _ in range(5):
