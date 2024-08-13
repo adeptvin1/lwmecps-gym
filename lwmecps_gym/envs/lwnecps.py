@@ -1,5 +1,6 @@
 import gymnasium as gym
 from gymnasium import spaces
+from time import sleep
 from lwmecps_gym.envs.kubernetes_api import k8s
 import numpy as np
 import bitmath
@@ -69,7 +70,8 @@ class LWMECPSEnv(gym.Env):
             } for node in self.node_name
         }
         for node in self.state:
-            for deployment_name in self.state[node]['deployments']:
+            # пока не нужно
+            # for deployment_name in self.state[node]['deployments']:
                 self.minikube.k8s_action(namespace=self.namespace, deployment_name=self.deployment_name, replicas=1, node=node)
 
         return self.state
@@ -77,12 +79,13 @@ class LWMECPSEnv(gym.Env):
 
     def step(self, action):
         assert self.action_space.contains(action), "Invalid action"
-        new_state = self.k8s_state_gym()
-        print(new_state)
+        self.state = self.k8s_state_gym()
         # Перемещение pod на новую ноду
         pod_node = self.node_name[action]
         self.minikube.k8s_action(namespace=self.namespace, deployment_name=self.deployment_name, replicas=1, node=pod_node)
-
+        print('step is passed')
+        sleep(3)
+        reward, done = self.reward()
         # node_parameters = ['cpu', 'ram', 'tx_bandwidth', 'rx_bandwidth', 'read_disks_bandwidth', 'write_disks_bandwidth']
         # # Освобождение ресурсов на текущей ноде
         # for param in node_parameters:
@@ -105,12 +108,47 @@ class LWMECPSEnv(gym.Env):
         # self.state['pod_node'] = self.node_name[action]
 
         info = {}
+        print(self.state)
 
-        return self.state, # reward, done, info
+        return self.state, reward, done, info
 
+    def reward(self):
+        total_latency = 0
+        total_pods = 0
+        for node in self.node_name:
+            pods = 0
+            # #Смотрим количество выделенных подов. Чем больше подов == тем больше пользователей. В базе считаем что под полностью занят пользователями.
+            # print("node", node, "cpu", self.state[node]['cpu'], "pod", self.pod_usage['cpu'])
+            # # node_info - начальное состояние нод, state - текущее состояние окружения (свободные ресурсы) деленные на pod usage['cpu']
+            # # По факту это условное количество подов ?
+            # resource_usage = (self.node_info[node]["cpu"] - self.state[node]['cpu']) // self.pod_usage['cpu']
+            # total_resources += resource_usage
+            # # сумма всех задержек умноженных на использование ресурсов на каждой ноде (если ресурсов будет меньше = лучше)
+            # total_latency += self.state[node]['avg_latency'] * resource_usage
+            try:
+                pods = self.state[node]['deployments'][self.deployment_name]['replicas']
+            except KeyError:
+                pass
+            else:
+                total_pods += pods
+                total_latency += self.state[node]['avg_latency'] * pods
+
+        print("total pods", total_pods, "total latency", total_latency)
+        #Слабо представляю момент, когда будет 0 ресурсов, только если 0 нод в системе есть, либо если не выделен ни один под. Но перестраховаться никогда не плохо
+        if total_pods > 0:
+            done = False
+            reward = total_latency / total_pods
+
+        else: 
+            done = True
+            reward = -100
+
+        
+        return reward, done
 
     def k8s_state_gym(self):
         k8s_state_now = self.minikube.k8s_state()
+
         self.state = {
             node: {
                 'cpu': int(k8s_state_now[node]['cpu']),
@@ -120,13 +158,14 @@ class LWMECPSEnv(gym.Env):
                 'read_disks_bandwidth': self.node_info[node]['read_disks_bandwidth'],
                 'write_disks_bandwidth': self.node_info[node]['write_disks_bandwidth'],
                 'avg_latency': self.node_info[node]['avg_latency'],
-                'deployments':  k8s_state_now[node]['deployments'][self.namespace]
-                    # deployment: {
-                    #     'replicas': 0  # Пример числового значения
-                    # } for deployment in k8s_state_now[node]['deployments'][self.namespace]
-                
+                'deployments': {
+                    deployment: {
+                        'replicas': k8s_state_now[node]['deployments'].get(self.namespace, {}).get(deployment, {'replicas': 0})['replicas']
+                    } for deployment in self.deployments
+                } if 'deployments' in k8s_state_now[node] else {}
             } for node in self.node_name
         }
+        print(self.state)
         return self.state
 
     def render(self, mode='human'):
