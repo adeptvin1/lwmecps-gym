@@ -79,10 +79,10 @@ class LWMECPSEnv(gym.Env):
 
     def step(self, action):
         assert self.action_space.contains(action), "Invalid action"
-        self.state = self.k8s_state_gym()
         # Перемещение pod на новую ноду
         pod_node = self.node_name[action]
         self.minikube.k8s_action(namespace=self.namespace, deployment_name=self.deployment_name, replicas=1, node=pod_node)
+        self.state = self.k8s_state_gym()
         print('step is passed')
         sleep(3)
         reward, done = self.reward()

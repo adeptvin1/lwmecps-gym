@@ -64,7 +64,6 @@ for _ in range(5):
     done = False
     while not done:
         env.render()
-        print(env.action_space.sample())
         action = env.action_space.sample()  # Случайное действие
         observation, reward, done, info = env.step(action)
 
