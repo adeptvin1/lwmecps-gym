@@ -19,7 +19,7 @@ pip install -e .
 ### How to start work with lib
 
 Вам необходимо сделать следующие вещи:
-1. Установить minikube используя инструкцию -> (minikube install)[https://minikube.sigs.k8s.io/docs/start/?arch=%2Fmacos%2Farm64%2Fstable%2Fbinary+download]
+1. Установить minikube используя инструкцию -> [minikube install](https://minikube.sigs.k8s.io/docs/start/?arch=%2Fmacos%2Farm64%2Fstable%2Fbinary+download)
 2. Установить kubectl.
 3. Запустить minikube используя команду `minikube start --nodes 4 -p minikube`
 4. Запустить деплой mock сервиса используя команду `kubectl apply -f deployment.yml` (вы можете поправить его при необходимости)
