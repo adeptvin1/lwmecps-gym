@@ -7,6 +7,7 @@ import gymnasium as gym
 import bitmath
 import re
 import time
+import pickle 
 
 # class QLearningAgent:
 #     def __init__(self, env: LWMECPSEnv, learning_rate=0.1, discount_factor=0.9, exploration_rate=1.0, exploration_decay=0.99):
@@ -72,6 +73,17 @@ class QLearningAgent:
             node: np.zeros(self.env.action_space.n)
             for node in self.env.node_name
         }
+
+    def save_q_table(self, file_name):
+        with open(file_name, 'wb') as f:
+            pickle.dump(self.q_table, f)
+        print(f"Q-таблица сохранена в {file_name}")
+
+
+    def load_q_table(self, file_name):
+        with open(file_name, 'rb') as f:
+            self.q_table = pickle.load(f)
+        print(f"Q-таблица загружена из {file_name}")
 
     def choose_action(self, state):
         node = self.get_current_node(state)
@@ -167,5 +179,6 @@ if __name__ == "__main__":
 
     env = gym.make('lwmecps-v0',num_nodes = len(node_name), node_name = node_name, max_hardware = max_hardware, pod_usage = pod_usage, node_info = node_info, deployment_name = 'mec-test-app', namespace = 'default', deployments = ['mec-test-app'] )
     agent = QLearningAgent(env)
-    agent.train(episodes=5)
+    agent.train(episodes=100)
+    agent.save_q_table("./q_table.pkl")
 
