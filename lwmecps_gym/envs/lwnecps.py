@@ -20,7 +20,10 @@ class LWMECPSEnv(gym.Env):
         self.deployments = deployments
 
         self.minikube = k8s()
-
+        
+        self.prev_latency = None
+        self.current_latency = None
+        self.rew_amm = 0
         # self.render_mode = render_mode
         # self.window_size = window_size
         
@@ -53,6 +56,9 @@ class LWMECPSEnv(gym.Env):
         self.reset()
 
     def reset(self):
+        self.prev_latency = None
+        self.current_latency = None
+        self.rew_amm = 0
         self.state = {
             node: {
                 'cpu': self.node_info[node]['cpu'],
@@ -109,7 +115,13 @@ class LWMECPSEnv(gym.Env):
 
         info = {}
         print(self.state)
+        # Если задержка увеличилась, то завершаем эпизод, так как это ухудшение
+        if (self.prev_latency is not None) and (self.current_latency >= self.prev_latency):
+            done = True
+            reward -= 100  # Негативное вознаграждение за ухудшение
 
+        # Обновление предыдущей задержки
+        self.prev_latency = self.current_latency
         return self.state, reward, done, info
 
     def reward(self):
@@ -136,15 +148,16 @@ class LWMECPSEnv(gym.Env):
         print("total pods", total_pods, "total latency", total_latency)
         #Слабо представляю момент, когда будет 0 ресурсов, только если 0 нод в системе есть, либо если не выделен ни один под. Но перестраховаться никогда не плохо
         if total_pods > 0:
+            self.current_latency = total_latency / total_pods
             done = False
-            reward = total_latency / total_pods
+            self.rew_amm -= self.current_latency # Инверсируем задержку, чтобы минимизация давала положительный reward
 
         else: 
             done = True
-            reward = -100
+            self.rew_amm = -1000
 
         
-        return reward, done
+        return self.rew_amm, done
 
     def k8s_state_gym(self):
         k8s_state_now = self.minikube.k8s_state()
