@@ -1,10 +1,12 @@
-import gymnasium as gym
-from gymnasium import spaces
-from time import sleep
-from lwmecps_gym.envs.kubernetes_api import k8s
-import numpy as np
-import bitmath
 import re
+from time import sleep
+
+import bitmath
+import gymnasium as gym
+import numpy as np
+from gymnasium import spaces
+from lwmecps_gym.envs.kubernetes_api import k8s
+
 
 class LWMECPSEnv(gym.Env):
 
@@ -144,11 +146,14 @@ class LWMECPSEnv(gym.Env):
             else:
                 total_pods += pods
                 total_latency += self.state[node]['avg_latency'] * pods
+         
 
-        print("total pods", total_pods, "total latency", total_latency)
+        print("total pods", total_pods)
         #Слабо представляю момент, когда будет 0 ресурсов, только если 0 нод в системе есть, либо если не выделен ни один под. Но перестраховаться никогда не плохо
         if total_pods > 0:
-            self.current_latency = total_latency / total_pods
+            total_latency /= total_pods
+            print("total pods", total_pods, "total latency", total_latency)
+            self.current_latency = total_latency 
             done = False
             self.rew_amm -= self.current_latency # Инверсируем задержку, чтобы минимизация давала положительный reward
 
