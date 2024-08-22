@@ -116,7 +116,7 @@ class LWMECPSEnv(gym.Env):
         # self.state['pod_node'] = self.node_name[action]
 
         info = {}
-        print(self.state)
+        # print(self.state)
         # Если задержка увеличилась, то завершаем эпизод, так как это ухудшение
         if (self.prev_latency is not None) and (self.current_latency >= self.prev_latency):
             done = True
