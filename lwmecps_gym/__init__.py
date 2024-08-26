@@ -6,3 +6,10 @@ register(
     kwargs={
     }
 )
+
+register(
+    id='lwmecps-v1',
+    entry_point='lwmecps_gym.envs:LWMECPSEnv2',
+    kwargs={
+    }
+)

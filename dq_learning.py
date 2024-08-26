@@ -1,17 +1,16 @@
 import os
 import random
+import re
 from collections import deque
 
+import bitmath
 import gymnasium as gym
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from lwmecps_gym.envs.kubernetes_api import k8s
 from gymnasium.envs.registration import register
-import bitmath
-import re
-
+from lwmecps_gym.envs.kubernetes_api import k8s
 
 # Hyperparameters
 gamma = 0.99
@@ -232,7 +231,7 @@ if __name__ == "__main__":
         )
 
     env = gym.make(
-        "lwmecps-v0",
+        "lwmecps-v1",
         num_nodes=len(node_name),
         node_name=node_name,
         max_hardware=max_hardware,

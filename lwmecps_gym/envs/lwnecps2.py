@@ -8,7 +8,7 @@ from gymnasium import spaces
 from lwmecps_gym.envs.kubernetes_api import k8s
 
 
-class LWMECPSEnv(gym.Env):
+class LWMECPSEnv2(gym.Env):
 
     def __init__(
         self,
@@ -22,7 +22,7 @@ class LWMECPSEnv(gym.Env):
         deployments,
         max_pods,
     ):
-        super(LWMECPSEnv, self).__init__()
+        super(LWMECPSEnv2, self).__init__()
         self.num_nodes = num_nodes
         self.node_name = node_name
         self.max_hardware = max_hardware
