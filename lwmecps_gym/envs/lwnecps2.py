@@ -119,7 +119,7 @@ class LWMECPSEnv(gym.Env):
             replicas=1,
             node=pod_node,
         )
-        sleep(60)
+        sleep(40)
         self.state = self.k8s_state_gym()
         print("step is passed")
         sleep(3)
