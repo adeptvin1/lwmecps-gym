@@ -10,6 +10,7 @@ from gymnasium.envs.registration import register
 from lwmecps_gym.envs.kubernetes_api import k8s
 from lwmecps_gym.envs.lwnecps import LWMECPSEnv
 
+
 # class QLearningAgent:
 #     def __init__(self, env: LWMECPSEnv, learning_rate=0.1, discount_factor=0.9, exploration_rate=1.0, exploration_decay=0.99):
 #         self.env = env
@@ -69,7 +70,7 @@ class QLearningAgent:
         learning_rate=0.1,
         discount_factor=0.9,
         exploration_rate=1.0,
-        exploration_decay=0.9,
+        exploration_decay=0.98,
     ):
         self.env = env
         self.learning_rate = learning_rate
@@ -157,12 +158,14 @@ if __name__ == "__main__":
         "cpu": 2,
         "ram": 2000,
         "tx_bandwidth": 20,
-        "rx_bandwidth": 80,
+        "rx_bandwidth": 20,
         "read_disks_bandwidth": 100,
         "write_disks_bandwidth": 100,
     }
 
     state = minikube.k8s_state()
+
+    max_pods = 10000
 
     for node in state:
         node_name.append(node)
@@ -185,6 +188,8 @@ if __name__ == "__main__":
             "write_disks_bandwidth": 300,
             "avg_latency": avg_latency,
         }
+        #Работатет только пока находятся в том же порядке. 
+        max_pods = min([min([val//pod_usage[key] for key, (_, val) in zip(pod_usage.keys(), node_info[node].items())]), max_pods])
 
     env = gym.make(
         "lwmecps-v0",
@@ -196,6 +201,7 @@ if __name__ == "__main__":
         deployment_name="mec-test-app",
         namespace="default",
         deployments=["mec-test-app"],
+        max_pods = max_pods
     )
     agent = QLearningAgent(env)
     agent.train(episodes=1000)

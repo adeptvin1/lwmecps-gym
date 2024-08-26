@@ -10,7 +10,18 @@ from lwmecps_gym.envs.kubernetes_api import k8s
 
 class LWMECPSEnv(gym.Env):
 
-    def __init__(self, node_name , max_hardware, pod_usage, node_info, num_nodes, namespace, deployment_name, deployments):
+    def __init__(
+        self,
+        node_name,
+        max_hardware,
+        pod_usage,
+        node_info,
+        num_nodes,
+        namespace,
+        deployment_name,
+        deployments,
+        max_pods,
+    ):
         super(LWMECPSEnv, self).__init__()
         self.num_nodes = num_nodes
         self.node_name = node_name
@@ -20,38 +31,85 @@ class LWMECPSEnv(gym.Env):
         self.namespace = namespace
         self.deployment_name = deployment_name
         self.deployments = deployments
+        self.max_pods = max_pods
 
         self.minikube = k8s()
-        
+
         self.prev_latency = None
         self.current_latency = None
         self.rew_amm = 0
         # self.render_mode = render_mode
         # self.window_size = window_size
-        
+
         # spaces https://gymnasium.farama.org/api/spaces/composite/
         self.action_space = spaces.Discrete(self.num_nodes)
-        
+
         # spaces https://gymnasium.farama.org/api/spaces/composite/
         self.observation_space = spaces.Dict(
             {
                 node: spaces.Dict(
                     {
-                        'cpu': spaces.Box(low=0, high=self.max_hardware['cpu'], shape=(), dtype=np.float32),
-                        'ram': spaces.Box(low=0, high=self.max_hardware['ram'], shape=(), dtype=np.float32),
-                        'tx_bandwidth': spaces.Box(low=0, high=self.max_hardware['tx_bandwidth'], shape=(), dtype=np.float32),
-                        'rx_bandwidth': spaces.Box(low=0, high=self.max_hardware['rx_bandwidth'], shape=(), dtype=np.float32),
-                        'read_disks_bandwidth': spaces.Box(low=0, high=self.max_hardware['read_disks_bandwidth'], shape=(), dtype=np.float32),
-                        'write_disks_bandwidth': spaces.Box(low=0, high=self.max_hardware['write_disks_bandwidth'], shape=(), dtype=np.float32),
-                        'avg_latency': spaces.Box(low=0, high=self.max_hardware['avg_latency'], shape=(), dtype=np.float32),
-                        'deployments': spaces.Dict({
-                            deployment: spaces.Dict({
-                                'replicas': spaces.Box(low=0, high=10, shape=(), dtype=np.float32)
-                            }) for deployment in self.deployments
-                        })
+                        "cpu": spaces.Box(
+                            low=0,
+                            high=self.max_hardware["cpu"],
+                            shape=(),
+                            dtype=np.float32,
+                        ),
+                        "ram": spaces.Box(
+                            low=0,
+                            high=self.max_hardware["ram"],
+                            shape=(),
+                            dtype=np.float32,
+                        ),
+                        "tx_bandwidth": spaces.Box(
+                            low=0,
+                            high=self.max_hardware["tx_bandwidth"],
+                            shape=(),
+                            dtype=np.float32,
+                        ),
+                        "rx_bandwidth": spaces.Box(
+                            low=0,
+                            high=self.max_hardware["rx_bandwidth"],
+                            shape=(),
+                            dtype=np.float32,
+                        ),
+                        "read_disks_bandwidth": spaces.Box(
+                            low=0,
+                            high=self.max_hardware["read_disks_bandwidth"],
+                            shape=(),
+                            dtype=np.float32,
+                        ),
+                        "write_disks_bandwidth": spaces.Box(
+                            low=0,
+                            high=self.max_hardware["write_disks_bandwidth"],
+                            shape=(),
+                            dtype=np.float32,
+                        ),
+                        "avg_latency": spaces.Box(
+                            low=0,
+                            high=self.max_hardware["avg_latency"],
+                            shape=(),
+                            dtype=np.float32,
+                        ),
+                        "deployments": spaces.Dict(
+                            {
+                                deployment: spaces.Dict(
+                                    {
+                                        "replicas": spaces.Box(
+                                            low=0,
+                                            high=self.max_pods,
+                                            shape=(),
+                                            dtype=np.float32,
+                                        )
+                                    }
+                                )
+                                for deployment in self.deployments
+                            }
+                        ),
                     }
-                # Тут реализован цикл проходящий по именам нод и создающий словарь описания нод 
-                ) for node in self.node_name
+                    # Тут реализован цикл проходящий по именам нод и создающий словарь описания нод
+                )
+                for node in self.node_name
             }
         )
         self.state = None
@@ -63,43 +121,52 @@ class LWMECPSEnv(gym.Env):
         self.rew_amm = 0
         self.state = {
             node: {
-                'cpu': self.node_info[node]['cpu'],
-                'ram': self.node_info[node]['ram'],
-                'tx_bandwidth': self.node_info[node]['tx_bandwidth'],
-                'rx_bandwidth': self.node_info[node]['rx_bandwidth'],
-                'read_disks_bandwidth': self.node_info[node]['read_disks_bandwidth'],
-                'write_disks_bandwidth': self.node_info[node]['write_disks_bandwidth'],
-                'avg_latency': self.node_info[node]['avg_latency'],
-                'deployments': {
-                    deployment: {
-                        'replicas': 0  # Пример числового значения
-                    } for deployment in self.deployments
-                }
-            } for node in self.node_name
+                "cpu": self.node_info[node]["cpu"],
+                "ram": self.node_info[node]["ram"],
+                "tx_bandwidth": self.node_info[node]["tx_bandwidth"],
+                "rx_bandwidth": self.node_info[node]["rx_bandwidth"],
+                "read_disks_bandwidth": self.node_info[node]["read_disks_bandwidth"],
+                "write_disks_bandwidth": self.node_info[node]["write_disks_bandwidth"],
+                "avg_latency": self.node_info[node]["avg_latency"],
+                "deployments": {
+                    deployment: {"replicas": 0}  # Пример числового значения
+                    for deployment in self.deployments
+                },
+            }
+            for node in self.node_name
         }
         for node in self.state:
             # пока не нужно
             # for deployment_name in self.state[node]['deployments']:
-                self.minikube.k8s_action(namespace=self.namespace, deployment_name=self.deployment_name, replicas=1, node=node)
+            self.minikube.k8s_action(
+                namespace=self.namespace,
+                deployment_name=self.deployment_name,
+                replicas=1,
+                node=node,
+            )
 
         return self.state
-    
 
     def step(self, action):
         assert self.action_space.contains(action), "Invalid action"
         # Перемещение pod на новую ноду
         pod_node = self.node_name[action]
-        self.minikube.k8s_action(namespace=self.namespace, deployment_name=self.deployment_name, replicas=1, node=pod_node)
+        self.minikube.k8s_action(
+            namespace=self.namespace,
+            deployment_name=self.deployment_name,
+            replicas=1,
+            node=pod_node,
+        )
+        sleep(60)
         self.state = self.k8s_state_gym()
-        print('step is passed')
+        print("step is passed")
         sleep(3)
         reward, done = self.reward()
         # node_parameters = ['cpu', 'ram', 'tx_bandwidth', 'rx_bandwidth', 'read_disks_bandwidth', 'write_disks_bandwidth']
         # # Освобождение ресурсов на текущей ноде
         # for param in node_parameters:
         #     self.state[current_pod_node][param] = min(self.state[current_pod_node][param] + self.pod_usage[param], self.node_info[current_pod_node][param])
-       
-        
+
         # # Потребление ресурсов на новой ноде
         # for param in node_parameters:
         #     self.state[pod_node][param] -= self.pod_usage[param]
@@ -118,7 +185,9 @@ class LWMECPSEnv(gym.Env):
         info = {}
         # print(self.state)
         # Если задержка увеличилась, то завершаем эпизод, так как это ухудшение
-        if (self.prev_latency is not None) and (self.current_latency >= self.prev_latency):
+        if (self.prev_latency is not None) and (
+            self.current_latency >= self.prev_latency
+        ):
             done = True
             reward -= 100  # Негативное вознаграждение за ухудшение
 
@@ -140,28 +209,28 @@ class LWMECPSEnv(gym.Env):
             # # сумма всех задержек умноженных на использование ресурсов на каждой ноде (если ресурсов будет меньше = лучше)
             # total_latency += self.state[node]['avg_latency'] * resource_usage
             try:
-                pods = self.state[node]['deployments'][self.deployment_name]['replicas']
+                pods = self.state[node]["deployments"][self.deployment_name]["replicas"]
             except KeyError:
                 pass
             else:
                 total_pods += pods
-                total_latency += self.state[node]['avg_latency'] * pods
-         
+                total_latency += self.state[node]["avg_latency"] * pods
 
         print("total pods", total_pods)
-        #Слабо представляю момент, когда будет 0 ресурсов, только если 0 нод в системе есть, либо если не выделен ни один под. Но перестраховаться никогда не плохо
+        # Слабо представляю момент, когда будет 0 ресурсов, только если 0 нод в системе есть, либо если не выделен ни один под. Но перестраховаться никогда не плохо
         if total_pods > 0:
             total_latency /= total_pods
             print("total pods", total_pods, "total latency", total_latency)
-            self.current_latency = total_latency 
+            self.current_latency = total_latency
             done = False
-            self.rew_amm -= self.current_latency # Инверсируем задержку, чтобы минимизация давала положительный reward
+            self.rew_amm -= (
+                self.current_latency
+            )  # Инверсируем задержку, чтобы минимизация давала положительный reward
 
-        else: 
+        else:
             done = True
             self.rew_amm = -1000
 
-        
         return self.rew_amm, done
 
     def k8s_state_gym(self):
@@ -169,26 +238,47 @@ class LWMECPSEnv(gym.Env):
 
         self.state = {
             node: {
-                'cpu': int(k8s_state_now[node]['cpu']),
-                'ram': round(bitmath.KiB(int(re.findall(r'\d+', k8s_state_now[node]['memory'])[0])).to_MB().value),
-                'tx_bandwidth': self.node_info[node]['tx_bandwidth'],
-                'rx_bandwidth': self.node_info[node]['rx_bandwidth'],
-                'read_disks_bandwidth': self.node_info[node]['read_disks_bandwidth'],
-                'write_disks_bandwidth': self.node_info[node]['write_disks_bandwidth'],
-                'avg_latency': self.node_info[node]['avg_latency'],
-                'deployments': {
-                    deployment: {
-                        'replicas': k8s_state_now[node]['deployments'].get(self.namespace, {}).get(deployment, {'replicas': 0})['replicas']
-                    } for deployment in self.deployments
-                } if 'deployments' in k8s_state_now[node] else {}
-            } for node in self.node_name
+                "cpu": int(k8s_state_now[node]["cpu"]),
+                "ram": round(
+                    bitmath.KiB(
+                        int(re.findall(r"\d+", k8s_state_now[node]["memory"])[0])
+                    )
+                    .to_MB()
+                    .value
+                ),
+                "tx_bandwidth": self.node_info[node]["tx_bandwidth"],
+                "rx_bandwidth": self.node_info[node]["rx_bandwidth"],
+                "read_disks_bandwidth": self.node_info[node]["read_disks_bandwidth"],
+                "write_disks_bandwidth": self.node_info[node]["write_disks_bandwidth"],
+                "avg_latency": self.node_info[node]["avg_latency"],
+                "deployments": (
+                    {
+                        deployment: {
+                            "replicas": k8s_state_now[node]["deployments"]
+                            .get(self.namespace, {})
+                            .get(deployment, {"replicas": 0})["replicas"]
+                        }
+                        for deployment in self.deployments
+                    }
+                    if "deployments" in k8s_state_now[node]
+                    else {}
+                ),
+            }
+            for node in self.node_name
         }
         print(self.state)
         return self.state
 
-    def render(self, mode='human'):
-        nodes_state = {node: {'cpu': self.state[node]['cpu'], 'ram': self.state[node]['ram'], 'avg_latency': self.state[node]['avg_latency'], 'deployments': self.state[node]['deployments']  } for node in self.node_name}
-
+    def render(self, mode="human"):
+        nodes_state = {
+            node: {
+                "cpu": self.state[node]["cpu"],
+                "ram": self.state[node]["ram"],
+                "avg_latency": self.state[node]["avg_latency"],
+                "deployments": self.state[node]["deployments"],
+            }
+            for node in self.node_name
+        }
 
     def close(self):
         pass
