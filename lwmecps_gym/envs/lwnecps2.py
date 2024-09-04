@@ -125,7 +125,7 @@ class LWMECPSEnv2(gym.Env):
         sleep(3)
         reward, done = self.reward()
 
-        info = {}
+        info = {"latency":self.current_latency}
 
         if (self.prev_latency is not None) and (
             self.current_latency >= self.prev_latency

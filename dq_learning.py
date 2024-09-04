@@ -1,7 +1,9 @@
+import json
 import os
 import random
 import re
 from collections import deque
+from time import time
 
 import bitmath
 import gymnasium as gym
@@ -17,9 +19,9 @@ gamma = 0.99
 learning_rate = 0.001
 batch_size = 64
 replay_buffer_size = 10000
-target_update_freq = 10
-num_episodes = 1000
-max_steps_per_episode = 200
+target_update_freq = 5
+num_episodes = 100
+max_steps_per_episode = 100
 epsilon_start = 1.0
 epsilon_end = 0.01
 epsilon_decay = 0.995
@@ -133,18 +135,25 @@ class DQNAgent:
 def train_dqn(agent, num_episodes):
     epsilon = epsilon_start
     rewards = []
+    episode_latency = {}
+    episode_reward = {}
     for episode in range(num_episodes):
         state = env.reset()
         total_reward = 0
         for step in range(max_steps_per_episode):
             action = agent.act(state, epsilon)
-            next_state, reward, done, _ = env.step(action)
+            next_state, reward, done, info = env.step(action)
             agent.replay_buffer.push(state, action, reward, next_state, done)
             state = next_state
             total_reward += reward
             agent.train_step()
             if done:
                 break
+
+            episode_latency[episode] = min(
+                info["latency"], episode_latency.get(episode, 100000)
+            )
+            episode_reward[episode] = reward
 
         rewards.append(total_reward)
         epsilon = max(epsilon_end, epsilon * epsilon_decay)
@@ -157,6 +166,12 @@ def train_dqn(agent, num_episodes):
     agent.model.save_model()
     agent.target_model.save_model(file_name="./dqn_target_model.pth")
     print("Training end.")
+    with open("./episode_latency.json", "w") as file:
+        json.dump(episode_latency, file, indent=4)
+
+    with open("./episode_reward.json", "w") as file:
+        json.dump(episode_reward, file, indent=4)
+
     return rewards
 
 
@@ -244,5 +259,7 @@ if __name__ == "__main__":
     )
 
     replay_buffer = ReplayBuffer(replay_buffer_size)
+    start = time()
     agent = DQNAgent(env, replay_buffer)
     train_dqn(agent, num_episodes)
+    print(f"Training time: {(time() - start)}")
