@@ -87,10 +87,10 @@ class QLearningAgent:
             self.exploration_rate *= self.exploration_decay
             print(f"Episode {episode + 1}: exploration rate = {self.exploration_rate}")
 
-            with open("./episode_latency.json", "w") as file:
+            with open("./q_episode_latency.json", "w") as file:
                 json.dump(episode_latency, file, indent=4)
 
-            with open("./episode_reward.json", "w") as file:
+            with open("./q_episode_reward.json", "w") as file:
                 json.dump(episode_reward, file, indent=4)
 
 
