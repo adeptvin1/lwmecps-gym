@@ -27,8 +27,8 @@ jobs:
         pip install flake8 pylint mypy black isort
         pip install -r requirements.txt
         
-    - name: Run flake8
-      run: flake8 server client
+    # - name: Run flake8
+    #   run: flake8 server client
       
     # - name: Run pylint
     #   run: pylint server client

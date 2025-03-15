@@ -62,11 +62,14 @@ class LWMECPSEnv2(gym.Env):
                 "ram": self.node_info[node]["ram"],
                 "tx_bandwidth": self.node_info[node]["tx_bandwidth"],
                 "rx_bandwidth": self.node_info[node]["rx_bandwidth"],
-                "read_disks_bandwidth": self.node_info[node]["read_disks_bandwidth"],
-                "write_disks_bandwidth": self.node_info[node]["write_disks_bandwidth"],
+                "read_disks_bandwidth":
+                    self.node_info[node]["read_disks_bandwidth"],
+                "write_disks_bandwidth":
+                    self.node_info[node]["write_disks_bandwidth"],
                 "avg_latency": self.node_info[node]["avg_latency"],
                 "deployments": {
-                    deployment: {"replicas": 0} for deployment in self.deployments
+                    deployment: {"replicas": 0}
+                        for deployment in self.deployments
                 },
             }
             for node in self.node_name
@@ -104,7 +107,8 @@ class LWMECPSEnv2(gym.Env):
             )
             for deployment in self.deployments:
                 state_vector.append(
-                    node_state["deployments"][deployment]["replicas"] / self.max_pods
+                    node_state["deployments"][deployment]["replicas"] /
+                    self.max_pods
                 )
 
         return np.array(state_vector, dtype=np.float32)
@@ -125,7 +129,7 @@ class LWMECPSEnv2(gym.Env):
         sleep(3)
         reward, done = self.reward()
 
-        info = {"latency":self.current_latency}
+        info = {"latency": self.current_latency}
 
         if (self.prev_latency is not None) and (
             self.current_latency >= self.prev_latency
@@ -142,7 +146,10 @@ class LWMECPSEnv2(gym.Env):
         for node in self.node_name:
             pods = 0
             try:
-                pods = self.state[node]["deployments"][self.deployment_name]["replicas"]
+                pods = (
+                    self.state[node]["deployments"]
+                    [self.deployment_name]["replicas"]
+                )
             except KeyError:
                 pass
             else:
@@ -171,15 +178,19 @@ class LWMECPSEnv2(gym.Env):
                 "cpu": int(k8s_state_now[node]["cpu"]),
                 "ram": round(
                     bitmath.KiB(
-                        int(re.findall(r"\d+", k8s_state_now[node]["memory"])[0])
+                        int(re.findall(
+                            r"\d+", k8s_state_now[node]["memory"])[0]
+                            )
                     )
                     .to_MB()
                     .value
                 ),
                 "tx_bandwidth": self.node_info[node]["tx_bandwidth"],
                 "rx_bandwidth": self.node_info[node]["rx_bandwidth"],
-                "read_disks_bandwidth": self.node_info[node]["read_disks_bandwidth"],
-                "write_disks_bandwidth": self.node_info[node]["write_disks_bandwidth"],
+                "read_disks_bandwidth":
+                    self.node_info[node]["read_disks_bandwidth"],
+                "write_disks_bandwidth":
+                    self.node_info[node]["write_disks_bandwidth"],
                 "avg_latency": self.node_info[node]["avg_latency"],
                 "deployments": (
                     {
@@ -209,6 +220,7 @@ class LWMECPSEnv2(gym.Env):
             }
             for node in self.node_name
         }
+        return nodes_state
 
     def close(self):
         pass

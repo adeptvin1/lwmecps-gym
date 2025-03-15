@@ -87,8 +87,11 @@ class DQNAgent:
     def __init__(self, env, replay_buffer):
         self.env = env
         self.replay_buffer = replay_buffer
-        self.model = DQN(env.observation_space.shape[0], env.action_space.n).to(device)
-        self.target_model = DQN(env.observation_space.shape[0], env.action_space.n).to(
+        self.model = DQN(env.observation_space.shape[0],
+                         env.action_space.n).to(device)
+        self.target_model = DQN(
+            env.observation_space.shape[0],
+            env.action_space.n).to(
             device
         )
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
@@ -110,7 +113,8 @@ class DQNAgent:
         if self.replay_buffer.size() < batch_size:
             return
 
-        state, action, reward, next_state, done = self.replay_buffer.sample(batch_size)
+        state, action, reward, next_state, done = \
+            self.replay_buffer.sample(batch_size)
 
         state = torch.FloatTensor(state).to(device)
         next_state = torch.FloatTensor(next_state).to(device)
@@ -161,7 +165,10 @@ def train_dqn(agent, num_episodes):
         if episode % target_update_freq == 0:
             agent.update_target_network()
 
-        print(f"Episode {episode}, Total Reward: {total_reward}, Epsilon: {epsilon}")
+        print(
+            f"Episode {episode}, Total Reward: {total_reward}, "
+            f"Epsilon: {epsilon}"
+        )
 
     agent.model.save_model()
     agent.target_model.save_model(file_name="./dqn_target_model.pth")
