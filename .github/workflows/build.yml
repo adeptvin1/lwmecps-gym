@@ -70,7 +70,7 @@ jobs:
       uses: docker/build-push-action@v4
       with:
         context: .
-        file: ./server/Dockerfile
+        file: ./Dockerfile
         push: ${{ github.event_name != 'pull_request' }}
         tags: ${{ secrets.DOCKERHUB_USERNAME }}/lwmecps-gym:${{ github.sha }},${{ secrets.DOCKERHUB_USERNAME }}/lwmecps-gym:latest
         cache-from: type=gha
