@@ -93,3 +93,8 @@ docker-compose.override.yml
 !k8s/
 !tests/
 !src/lwmecps_gym/
+
+# Weights & Biases
+wandb/
+wandb_logs/
+.env.wandb

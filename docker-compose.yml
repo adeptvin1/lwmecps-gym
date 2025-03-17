@@ -16,6 +16,9 @@ services:
       - ./src:/app/src
       - ./tests:/app/tests
       - ./setup.py:/app/setup.py
+      - ./wandb_logs:/app/wandb_logs
+    env_file:
+      - .env.wandb
     networks:
       app_network:
         ipv4_address: 172.16.12.4
@@ -42,6 +45,9 @@ services:
       - ./src:/app/src
       - ./tests:/app/tests
       - ./setup.py:/app/setup.py
+      - ./wandb_logs:/app/wandb_logs
+    env_file:
+      - .env.wandb
     command: >
       sh -c "pip install -e . &&
              uvicorn src.lwmecps_gym.main:app --host 0.0.0.0 --port 8010 --reload"
