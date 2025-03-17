@@ -2,3 +2,10 @@ gymnasium>=0.29.1
 numpy
 kubernetes
 bitmath
+fastapi>=0.103.1
+uvicorn>=0.23.2
+motor>=3.3.1
+pydantic>=2.4.2
+prometheus-client
+pydantic_settings
+wandb
