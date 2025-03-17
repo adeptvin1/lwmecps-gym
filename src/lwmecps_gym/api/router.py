@@ -1,7 +1,7 @@
 from fastapi import APIRouter
-from .endpoints import gym
+from .endpoints import training
 
 router = APIRouter()
 
 # Register all endpoint routers
-router.include_router(gym.router, prefix="/gym", tags=["gym"]) 
+router.include_router(training.router, prefix="/training", tags=["training"]) 
