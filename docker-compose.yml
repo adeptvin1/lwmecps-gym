@@ -8,13 +8,46 @@ services:
     ports:
       - "8010:8010"
     environment:
-      - SERVER_URL=http://server:8010
-      - HOST=localhost
-      - PORT=0.0.0.0
+      - HOST=0.0.0.0
+      - PORT=8010
+      - DEBUG=false
+      - PYTHONPATH=/app
+    volumes:
+      - ./src:/app/src
+      - ./tests:/app/tests
+      - ./setup.py:/app/setup.py
     networks:
       app_network:
         ipv4_address: 172.16.12.4
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8010/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
+  # Development service with hot-reload
+  gym-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8011:8010"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8010
+      - DEBUG=true
+      - PYTHONPATH=/app
+    volumes:
+      - ./src:/app/src
+      - ./tests:/app/tests
+      - ./setup.py:/app/setup.py
+    command: >
+      sh -c "pip install -e . &&
+             uvicorn src.lwmecps_gym.main:app --host 0.0.0.0 --port 8010 --reload"
+    networks:
+      app_network:
+        ipv4_address: 172.16.12.5
 
 networks:
   app_network:

@@ -6,8 +6,8 @@ import uvicorn
 from prometheus_client import make_asgi_app
 # from typing import List
 
-from api.endpoints import router as api_router
-from config import settings
+from lwmecps_gym.api.router import router as api_router
+from lwmecps_gym.core.config import settings
 
 app = FastAPI(
     title="LWMECPS GYM API",

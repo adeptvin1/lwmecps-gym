@@ -1,4 +1,95 @@
-*.pyc
-__pycache__
-.*
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.env
+.venv
 myenv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+.project
+.pydevproject
+.settings/
+
+# Testing
+.coverage
+htmlcov/
+.tox/
+.nox/
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Logs
+*.log
+logs/
+log/
+
+# Local development
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Docker
+.docker/
+docker-compose.override.yml
+
+# Project specific
+# Model files
+*.pkl
+*.model
+*.weights
+*.h5
+*.pth
+*.onnx
+*.tflite
+*.pb
+*.mlmodel
+*.mlpackage
+
+# Data files
+*.json
+!package.json
+!package-lock.json
+!k8s/*.json
+!src/lwmecps_gym/envs/*.json
+
+# Keep important directories
+!src/lwmecps_gym/envs/
+!k8s/
+!tests/
+!src/lwmecps_gym/
