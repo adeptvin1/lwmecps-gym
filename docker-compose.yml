@@ -11,6 +11,7 @@ services:
       app_network:
         ipv4_address: 172.16.12.2
 
+
   gym:
     build:
       context: .
@@ -24,12 +25,20 @@ services:
       - PYTHONPATH=/app
       - DB_MONGODB_URL=mongodb://mongodb:27017
       - DB_DATABASE_NAME=lwmecps_gym
+      - KUBERNETES_SERVER=${KUBERNETES_SERVER}
+      - KUBERNETES_CERTIFICATE_AUTHORITY=${KUBERNETES_CERTIFICATE_AUTHORITY}
+      - KUBERNETES_CLIENT_CERTIFICATE=${KUBERNETES_CLIENT_CERTIFICATE}
+      - KUBERNETES_CLIENT_KEY=${KUBERNETES_CLIENT_KEY}
     volumes:
       - ./src:/app/src
       - ./tests:/app/tests
       - ./setup.py:/app/setup.py
       - ./wandb_logs:/app/wandb_logs
+      - ~/.minikube:/root/.minikube  # Mount minikube certificates
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # Allow access to host machine
     env_file:
+      - .env
       - .env.wandb
     depends_on:
       - mongodb
@@ -43,40 +52,9 @@ services:
       retries: 3
       start_period: 40s
 
-  # Development service with hot-reload
-  # gym-dev:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile
-  #   ports:
-  #     - "8011:8010"
-  #   environment:
-  #     - HOST=0.0.0.0
-  #     - PORT=8010
-  #     - DEBUG=true
-  #     - PYTHONPATH=/app
-  #     - DB_MONGODB_URL=mongodb://mongodb:27017
-  #     - DB_DATABASE_NAME=lwmecps_gym
-  #   volumes:
-  #     - ./src:/app/src
-  #     - ./tests:/app/tests
-  #     - ./setup.py:/app/setup.py
-  #     - ./wandb_logs:/app/wandb_logs
-  #   env_file:
-  #     - .env.wandb
-  #   depends_on:
-  #     - mongodb
-  #   command: >
-  #     sh -c "pip install -e . &&
-  #            uvicorn src.lwmecps_gym.main:app --host 0.0.0.0 --port 8010 --reload"
-  #   networks:
-  #     app_network:
-  #       ipv4_address: 172.16.12.5
-
 networks:
   app_network:
-    driver: bridge
-    ipam:
+    driver: bridge    ipam:
       driver: default
       config:
         - subnet: 172.16.12.0/24
