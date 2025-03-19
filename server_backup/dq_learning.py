@@ -28,7 +28,7 @@ epsilon_decay = 0.995
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-#28 128 64 4
+
 # Neural Network for DQN
 class DQN(nn.Module):
     def __init__(self, input_dim, output_dim):
@@ -80,6 +80,7 @@ class ReplayBuffer:
 
 
 device = "cpu"
+
 
 # DQN Agent
 class DQNAgent:
@@ -256,7 +257,9 @@ if __name__ == "__main__":
         deployments=["mec-test-app"],
         max_pods=max_pods,
     )
-
+    print(env.observation_space.shape[0])
+    print(env.action_space.n)
+    raise Exception("DONE")
     replay_buffer = ReplayBuffer(replay_buffer_size)
     start = time()
     agent = DQNAgent(env, replay_buffer)
