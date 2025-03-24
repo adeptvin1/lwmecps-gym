@@ -1,0 +1,75 @@
+{{- if .Values.mongodb.enabled -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "lwmecps-gym.fullname" . }}-mongodb
+  labels:
+    {{- include "lwmecps-gym.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mongodb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "lwmecps-gym.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: mongodb
+  template:
+    metadata:
+      labels:
+        {{- include "lwmecps-gym.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: mongodb
+    spec:
+      containers:
+        - name: mongodb
+          image: "{{ .Values.mongodb.image.repository }}:{{ .Values.mongodb.image.tag }}"
+          ports:
+            - name: mongodb
+              containerPort: 27017
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.mongodb.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data/db
+      volumes:
+        - name: data
+          {{- if .Values.mongodb.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "lwmecps-gym.fullname" . }}-mongodb
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "lwmecps-gym.fullname" . }}-mongodb
+  labels:
+    {{- include "lwmecps-gym.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mongodb
+spec:
+  type: ClusterIP
+  ports:
+    - port: 27017
+      targetPort: mongodb
+      protocol: TCP
+      name: mongodb
+  selector:
+    {{- include "lwmecps-gym.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: mongodb
+{{- if .Values.mongodb.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "lwmecps-gym.fullname" . }}-mongodb
+  labels:
+    {{- include "lwmecps-gym.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mongodb
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.mongodb.persistence.size }}
+{{- end }}
+{{- end }} 

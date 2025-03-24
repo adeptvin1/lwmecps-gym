@@ -1,14 +1,39 @@
-
 from kubernetes import client, config
 import time
+import os
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class k8s:
-    def __init__(self, ) -> None:
-        config.load_kube_config()
+    def __init__(self) -> None:
+        """
+        Initialize Kubernetes client.
+        Uses in-cluster configuration when running inside Kubernetes,
+        falls back to kubeconfig for local development.
+        """
+        try:
+            # Try to load in-cluster config first
+            config.load_incluster_config()
+            logger.info("Using in-cluster Kubernetes configuration")
+        except config.ConfigException:
+            # Fall back to kubeconfig for local development
+            config.load_kube_config()
+            logger.info("Using local kubeconfig for Kubernetes configuration")
+        
+        # Initialize API clients
         self.core_api = client.CoreV1Api()
         self.app_api = client.AppsV1Api()
-
-        pass
+        
+        # Test connection
+        try:
+            self.core_api.list_namespace()
+            logger.info("Successfully connected to Kubernetes API")
+        except Exception as e:
+            logger.error(f"Failed to connect to Kubernetes API: {str(e)}")
+            raise
 
     def k8s_state(self):
         state = {}

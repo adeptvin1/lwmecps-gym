@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "lwmecps-gym.fullname" . }}
+  labels:
+    {{- include "lwmecps-gym.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "lwmecps-gym.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "lwmecps-gym.selectorLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "lwmecps-gym.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          env:
+            - name: MONGODB_URL
+              value: "mongodb://{{ include "lwmecps-gym.fullname" . }}-mongodb:27017"
+            - name: WANDB_API_KEY
+              value: {{ .Values.wandb.apiKey | quote }}
+            - name: WANDB_PROJECT_NAME
+              value: {{ .Values.wandb.projectName | quote }}
+            - name: WANDB_ENTITY
+              value: {{ .Values.wandb.entity | quote }}
+            - name: KUBERNETES_SERVER
+              value: {{ .Values.kubernetes.server | quote }}
+            - name: KUBERNETES_NAMESPACE
+              value: {{ .Values.kubernetes.namespace | quote }}
+            - name: KUBERNETES_DEPLOYMENT_NAME
+              value: {{ .Values.kubernetes.deploymentName | quote }}
+            - name: KUBERNETES_MAX_PODS
+              value: {{ .Values.kubernetes.maxPods | quote }}
+          volumeMounts:
+            - name: models
+              mountPath: {{ .Values.training.modelSavePath }}
+            - name: wandb-logs
+              mountPath: {{ .Values.training.wandbLogsPath }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: models
+          emptyDir: {}
+        - name: wandb-logs
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }} 

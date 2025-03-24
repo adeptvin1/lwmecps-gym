@@ -1,0 +1,38 @@
+Thank you for installing {{ .Chart.Name }}.
+
+Your release is named {{ .Release.Name }}.
+
+To verify that the application is running, you can:
+
+1. Check the status of the deployment:
+   kubectl get deployment {{ include "lwmecps-gym.fullname" . }} --namespace {{ .Release.Namespace }}
+
+2. Check the status of the pods:
+   kubectl get pods --namespace {{ .Release.Namespace }} -l "app.kubernetes.io/name={{ include "lwmecps-gym.name" . }}"
+
+3. Check the logs:
+   kubectl logs --namespace {{ .Release.Namespace }} -l "app.kubernetes.io/name={{ include "lwmecps-gym.name" . }}"
+
+4. Access the API:
+   kubectl port-forward --namespace {{ .Release.Namespace }} svc/{{ include "lwmecps-gym.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+
+Then you can create a training task using curl:
+```bash
+curl -X POST "http://localhost:{{ .Values.service.port }}/api/v1/training/tasks" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "name": "Q-Learning Training",
+       "description": "Training Q-Learning agent for pod placement",
+       "model_type": "q_learning",
+       "parameters": {
+         "learning_rate": 0.1,
+         "discount_factor": 0.95,
+         "exploration_rate": 1.0,
+         "exploration_decay": 0.995
+       },
+       "total_episodes": 1000
+     }'
+```
+
+For more information about the API endpoints, visit:
+http://localhost:{{ .Values.service.port }}/docs 

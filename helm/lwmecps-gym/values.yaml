@@ -1,0 +1,104 @@
+# Default values for lwmecps-gym
+
+replicaCount: 1
+
+image:
+  repository: adeptvin4/lwmecps-gym
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: "lwmecps-gym"
+  annotations: {}
+
+podAnnotations: {}
+
+podSecurityContext: {}
+
+securityContext: {}
+
+service:
+  type: ClusterIP
+  port: 8000
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: chart-example.local
+      paths:
+        - path: /
+          pathType: ImplementationSpecific
+  tls: []
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+  scaleUpCooldownPeriod: 180
+  scaleDownCooldownPeriod: 180
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# MongoDB configuration
+mongodb:
+  enabled: true
+  image:
+    repository: mongo
+    tag: "latest"
+  persistence:
+    enabled: true
+    size: 10Gi
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+
+# Weights & Biases configuration
+wandb:
+  enabled: true
+  apiKey: ""
+  projectName: "lwmecps-gym"
+  entity: ""
+
+# Training configuration
+training:
+  defaultParameters:
+    learningRate: 0.1
+    discountFactor: 0.95
+    explorationRate: 1.0
+    explorationDecay: 0.995
+  defaultEpisodes: 1000
+  modelSavePath: "/app/models"
+  wandbLogsPath: "/app/wandb_logs"
+
+# Kubernetes cluster configuration
+kubernetes:
+  server: "https://kubernetes.default.svc"
+  namespace: "default"
+  deploymentName: "mec-test-app"
+  deployments:
+    - "mec-test-app"
+  maxPods: 10000 

@@ -1,0 +1,17 @@
+apiVersion: v2
+name: lwmecps-gym
+description: A Helm chart for LWMECPS Gym - Reinforcement Learning Environment for Kubernetes MEC Placement
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+maintainers:
+  - name: "Ivan Filianin"
+    email: "adeptvin1@gmail.com"
+keywords:
+  - kubernetes
+  - reinforcement-learning
+  - mec
+  - placement
+home: "https://github.com/adeptvin1/lwmecps-gym"
+sources:
+  - "https://github.com/adeptvin1/lwmecps-gym" 
