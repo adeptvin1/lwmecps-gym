@@ -59,18 +59,24 @@ spec:
               mountPath: {{ .Values.training.wandbLogsPath }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-          # livenessProbe:
-          #   httpGet:
-          #     path: /api/v1/health
-          #     port: http
-          #   initialDelaySeconds: 30
-          #   periodSeconds: 10
           # readinessProbe:
           #   httpGet:
-          #     path: /api/v1/health
-          #     port: http
+          #     path: /health
+          #     port: 8010
           #   initialDelaySeconds: 5
-          #   periodSeconds: 5
+          #   periodSeconds: 10
+          #   timeoutSeconds: 5
+          #   successThreshold: 1
+          #   failureThreshold: 3
+          # livenessProbe:
+          #   httpGet:
+          #     path: /health
+          #     port: 8010
+          #   initialDelaySeconds: 15
+          #   periodSeconds: 20
+          #   timeoutSeconds: 5
+          #   successThreshold: 1
+          #   failureThreshold: 3
       volumes:
         - name: models
           emptyDir: {}

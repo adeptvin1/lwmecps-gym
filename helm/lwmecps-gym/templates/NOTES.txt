@@ -36,3 +36,6 @@ curl -X POST "http://localhost:{{ .Values.service.port }}/api/v1/training/tasks"
 
 For more information about the API endpoints, visit:
 http://localhost:{{ .Values.service.port }}/docs 
+
+export POD_NAME=$(kubectl get pods --namespace {{ .Release.Namespace }} -l "app.kubernetes.io/name={{ .Chart.Name }},app.kubernetes.io/instance={{ .Release.Name }}" -o jsonpath="{.items[0].metadata.name}")
+export CONTAINER_PORT=8010 

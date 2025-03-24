@@ -45,7 +45,7 @@ docker-compose up -d
 
 4. Create and start a training task:
 ```bash
-curl -X POST "http://localhost:8000/api/v1/training/tasks" \
+curl -X POST "http://localhost:8010/api/v1/training/tasks" \
      -H "Content-Type: application/json" \
      -d '{
        "name": "Q-Learning Training",
@@ -289,14 +289,14 @@ docker-compose up -d
 3. Access the API:
 ```bash
 # Port-forward the service to localhost
-kubectl port-forward svc/lwmecps-gym 8000:8000 -n default
+kubectl port-forward svc/lwmecps-gym 8010:8010 -n default
 
-# Now you can access the API at http://localhost:8000
+# Now you can access the API at http://localhost:8010
 ```
 
 4. Create a training task:
 ```bash
-curl -X POST "http://localhost:8000/api/v1/training/tasks" \
+curl -X POST "http://localhost:8010/api/v1/training/tasks" \
      -H "Content-Type: application/json" \
      -d '{
        "name": "Q-Learning Training",
