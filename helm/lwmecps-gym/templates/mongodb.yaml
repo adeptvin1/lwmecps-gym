@@ -5,33 +5,35 @@ metadata:
   name: {{ include "lwmecps-gym.fullname" . }}-mongodb
   labels:
     {{- include "lwmecps-gym.labels" . | nindent 4 }}
-    app.kubernetes.io/component: mongodb
+    app: mongodb
 spec:
   replicas: 1
   selector:
     matchLabels:
       {{- include "lwmecps-gym.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: mongodb
+      app: mongodb
   template:
     metadata:
       labels:
         {{- include "lwmecps-gym.selectorLabels" . | nindent 8 }}
-        app.kubernetes.io/component: mongodb
+        app: mongodb
+        {{- with .Values.mongodb.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
       containers:
         - name: mongodb
           image: "{{ .Values.mongodb.image.repository }}:{{ .Values.mongodb.image.tag }}"
           ports:
-            - name: mongodb
-              containerPort: 27017
-              protocol: TCP
+            - containerPort: 27017
+              name: mongodb
+          volumeMounts:
+            - name: mongodb-data
+              mountPath: /data/db
           resources:
             {{- toYaml .Values.mongodb.resources | nindent 12 }}
-          volumeMounts:
-            - name: data
-              mountPath: /data/db
       volumes:
-        - name: data
+        - name: mongodb-data
           {{- if .Values.mongodb.persistence.enabled }}
           persistentVolumeClaim:
             claimName: {{ include "lwmecps-gym.fullname" . }}-mongodb
@@ -45,7 +47,7 @@ metadata:
   name: {{ include "lwmecps-gym.fullname" . }}-mongodb
   labels:
     {{- include "lwmecps-gym.labels" . | nindent 4 }}
-    app.kubernetes.io/component: mongodb
+    app: mongodb
 spec:
   type: ClusterIP
   ports:
@@ -55,7 +57,7 @@ spec:
       name: mongodb
   selector:
     {{- include "lwmecps-gym.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: mongodb
+    app: mongodb
 {{- if .Values.mongodb.persistence.enabled }}
 ---
 apiVersion: v1
@@ -64,7 +66,7 @@ metadata:
   name: {{ include "lwmecps-gym.fullname" . }}-mongodb
   labels:
     {{- include "lwmecps-gym.labels" . | nindent 4 }}
-    app.kubernetes.io/component: mongodb
+    app: mongodb
 spec:
   accessModes:
     - ReadWriteOnce

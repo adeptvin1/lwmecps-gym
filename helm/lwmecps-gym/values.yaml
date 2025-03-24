@@ -65,6 +65,9 @@ mongodb:
   image:
     repository: mongo
     tag: "latest"
+  labels:
+    app: mongodb
+    environment: production
   persistence:
     enabled: true
     size: 10Gi
