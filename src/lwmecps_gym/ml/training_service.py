@@ -6,7 +6,7 @@ from ..core.database import Database
 from ..core.models import TrainingTask, TrainingResult, ReconciliationResult, TrainingState
 from ..core.wandb_config import init_wandb, log_metrics, log_model, finish_wandb
 from ..core.wandb_config import WandbConfig
-import gym
+import gymnasium as gym
 from kubernetes import client as k8s
 from kubernetes import config as k8s_config
 
