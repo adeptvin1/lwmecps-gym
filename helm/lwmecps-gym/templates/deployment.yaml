@@ -36,22 +36,23 @@ spec:
               containerPort: {{ .Values.service.port }}
               protocol: TCP
           env:
-            - name: MONGODB_URL
-              value: "mongodb://{{ include "lwmecps-gym.fullname" . }}-mongodb:27017"
             - name: WANDB_API_KEY
-              value: {{ .Values.wandb.apiKey | quote }}
-            - name: WANDB_PROJECT_NAME
-              value: {{ .Values.wandb.projectName | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: wandb-secret
+                  key: api-key
+            - name: WANDB_PROJECT
+              value: {{ .Values.wandb.projectName }}
             - name: WANDB_ENTITY
-              value: {{ .Values.wandb.entity | quote }}
+              value: {{ .Values.wandb.entity }}
             - name: KUBERNETES_SERVER
-              value: {{ .Values.kubernetes.server | quote }}
+              value: {{ .Values.kubernetes.server }}
             - name: KUBERNETES_NAMESPACE
-              value: {{ .Values.kubernetes.namespace | quote }}
-            - name: KUBERNETES_DEPLOYMENT_NAME
-              value: {{ .Values.kubernetes.deploymentName | quote }}
-            - name: KUBERNETES_MAX_PODS
-              value: {{ .Values.kubernetes.maxPods | quote }}
+              value: {{ .Values.kubernetes.namespace }}
+            - name: MONGODB_URI
+              value: "mongodb://{{ .Release.Name }}-mongodb:27017"
+            - name: TRAINING_PARAMETERS
+              value: {{ toJson .Values.training.defaultParameters | quote }}
           volumeMounts:
             - name: models
               mountPath: {{ .Values.training.modelSavePath }}
@@ -59,24 +60,24 @@ spec:
               mountPath: {{ .Values.training.wandbLogsPath }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: http
-            initialDelaySeconds: 30
-            periodSeconds: 10
-            timeoutSeconds: 5
-            successThreshold: 1
-            failureThreshold: 3
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: http
-            initialDelaySeconds: 5
-            periodSeconds: 5
-            timeoutSeconds: 3
-            successThreshold: 1
-            failureThreshold: 3
+          # readinessProbe:
+          #   httpGet:
+          #     path: /health
+          #     port: 8000
+          #   initialDelaySeconds: 5
+          #   periodSeconds: 10
+          #   timeoutSeconds: 5
+          #   successThreshold: 1
+          #   failureThreshold: 3
+          # livenessProbe:
+          #   httpGet:
+          #     path: /health
+          #     port: 8000
+          #   initialDelaySeconds: 15
+          #   periodSeconds: 20
+          #   timeoutSeconds: 5
+          #   successThreshold: 1
+          #   failureThreshold: 3
       volumes:
         - name: models
           emptyDir: {}
