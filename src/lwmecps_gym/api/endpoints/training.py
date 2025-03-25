@@ -1,25 +1,34 @@
 from fastapi import APIRouter, HTTPException, Depends
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from ...core.models import TrainingTask, TrainingResult, ReconciliationResult
-from ...core.database import Database, DatabaseSettings
+from ...core.database import Database
 from ...core.wandb_config import WandbConfig
 from ...ml.training_service import TrainingService
 import logging
 from bson.objectid import ObjectId
+import os
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 async def get_db():
-    db_settings = DatabaseSettings()
-    db = Database(db_settings)
+    db = Database()
     try:
         yield db
     finally:
         await db.close()
 
-async def get_training_service(db: Database = Depends(get_db)):
-    wandb_config = WandbConfig()
+async def get_wandb_config():
+    return WandbConfig(
+        api_key=os.getenv("WANDB_API_KEY", ""),
+        project_name=os.getenv("WANDB_PROJECT", "lwmecps-gym"),
+        entity=os.getenv("WANDB_ENTITY", "")
+    )
+
+async def get_training_service(
+    db: Database = Depends(get_db),
+    wandb_config: WandbConfig = Depends(get_wandb_config)
+) -> TrainingService:
     return TrainingService(db, wandb_config)
 
 @router.post("/tasks", response_model=TrainingTask)

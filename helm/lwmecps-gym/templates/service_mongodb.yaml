@@ -12,4 +12,4 @@ spec:
       protocol: TCP
       name: mongodb
   selector:
-    {{- include "lwmecps-gym.selectorLabels" . | nindent 4 }} 
+    app: mongodb

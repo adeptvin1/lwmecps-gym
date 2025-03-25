@@ -5,6 +5,9 @@ from pydantic_settings import BaseSettings
 from bson import ObjectId
 from datetime import datetime
 from .models import TrainingTask, TrainingResult, ReconciliationResult
+import logging
+
+logger = logging.getLogger(__name__)
 
 class DatabaseSettings(BaseSettings):
     """Database configuration settings"""
@@ -16,8 +19,9 @@ class DatabaseSettings(BaseSettings):
 
 class Database:
     def __init__(self):
-        mongodb_uri = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
-        self.client = AsyncIOMotorClient(mongodb_uri)
+        mongodb_url = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
+        logger.info(f"Connecting to MongoDB at: {mongodb_url}")
+        self.client = AsyncIOMotorClient(mongodb_url)
         self.db = self.client.lwmecps_gym
         
     async def create_training_task(self, task: TrainingTask) -> TrainingTask:
