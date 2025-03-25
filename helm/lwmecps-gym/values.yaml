@@ -23,7 +23,7 @@ securityContext: {}
 
 service:
   type: ClusterIP
-  port: 8010
+  port: 8000
 
 ingress:
   enabled: false
@@ -62,12 +62,13 @@ affinity: {}
 # MongoDB configuration
 mongodb:
   enabled: true
+  service:
+    name: "lwmecps-gym-mongodb-service"
+    type: ClusterIP
+    port: 27017
   image:
     repository: mongo
     tag: "latest"
-  labels:
-    app: mongodb
-    environment: production
   persistence:
     enabled: true
     size: 10Gi

@@ -4,22 +4,16 @@ kind: Deployment
 metadata:
   name: {{ include "lwmecps-gym.fullname" . }}-mongodb
   labels:
-    {{- include "lwmecps-gym.labels" . | nindent 4 }}
     app: mongodb
 spec:
   replicas: 1
   selector:
     matchLabels:
-      {{- include "lwmecps-gym.selectorLabels" . | nindent 6 }}
       app: mongodb
   template:
     metadata:
       labels:
-        {{- include "lwmecps-gym.selectorLabels" . | nindent 8 }}
         app: mongodb
-        {{- with .Values.mongodb.labels }}
-        {{- toYaml . | nindent 8 }}
-        {{- end }}
     spec:
       containers:
         - name: mongodb

@@ -1,3 +1,4 @@
+import os
 from typing import List, Optional, Dict, Any
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic_settings import BaseSettings
@@ -14,9 +15,10 @@ class DatabaseSettings(BaseSettings):
         env_prefix = "DB_"
 
 class Database:
-    def __init__(self, settings: DatabaseSettings):
-        self.client = AsyncIOMotorClient(settings.mongodb_url)
-        self.db = self.client[settings.database_name]
+    def __init__(self):
+        mongodb_uri = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
+        self.client = AsyncIOMotorClient(mongodb_uri)
+        self.db = self.client.lwmecps_gym
         
     async def create_training_task(self, task: TrainingTask) -> TrainingTask:
         """Create a new training task"""
