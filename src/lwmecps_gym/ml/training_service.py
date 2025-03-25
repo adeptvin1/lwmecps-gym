@@ -7,8 +7,8 @@ from ..core.models import TrainingTask, TrainingResult, ReconciliationResult, Tr
 from ..core.wandb_config import init_wandb, log_metrics, log_model, finish_wandb
 from ..core.wandb_config import WandbConfig
 import gymnasium as gym
-from kubernetes import client as k8s
-from kubernetes import config as k8s_config
+from kubernetes import client, config
+from kubernetes.client import CoreV1Api
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -32,6 +32,12 @@ class TrainingService:
         self.db = db
         self.wandb_config = wandb_config
         self.active_tasks: Dict[str, bool] = {}  # Track running tasks
+        # Initialize Kubernetes client
+        try:
+            config.load_incluster_config()
+        except config.ConfigException:
+            config.load_kube_config()
+        self.k8s_client = CoreV1Api()
     
     async def create_training_task(self, task_data: Dict[str, Any]) -> TrainingTask:
         """
@@ -268,10 +274,9 @@ class TrainingService:
             
             # Get Kubernetes cluster state
             logger.info("Getting Kubernetes state...")
-            minikube = k8s()
-            state = minikube.k8s_state()
-            node_name = list(state.keys())
-            logger.info(f"Found nodes: {node_name}")
+            nodes = self.k8s_client.list_node()
+            node_names = [node.metadata.name for node in nodes.items]
+            logger.info(f"Found nodes: {node_names}")
             
             # Define environment parameters
             max_hardware = {
@@ -297,11 +302,11 @@ class TrainingService:
             logger.info("Creating Gym environment...")
             env = gym.make(
                 "lwmecps-v0",
-                num_nodes=len(node_name),
-                node_name=node_name,
+                num_nodes=len(node_names),
+                node_name=node_names,
                 max_hardware=max_hardware,
                 pod_usage=pod_usage,
-                node_info=state,
+                node_info={},  # We'll need to implement a way to get node info
                 deployment_name="mec-test-app",
                 namespace="default",
                 deployments=["mec-test-app"],
