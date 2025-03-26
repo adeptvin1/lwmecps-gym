@@ -2,6 +2,7 @@ from kubernetes import client, config
 import time
 import os
 import logging
+from kubernetes.client.rest import ApiException
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -36,25 +37,49 @@ class k8s:
             raise
 
     def k8s_state(self):
-        state = {}
-        list_nodes = self.core_api.list_node()
-        all_pods = self.core_api.list_pod_for_all_namespaces()
-        all_namespaces = self.core_api.list_namespace()
-        
-        block_ns = ['kube-node-lease', 'kube-public', 'kube-system', 'kubernetes-dashboard']
-        namespaces = [namespace.metadata.name for namespace in all_namespaces.items if namespace.metadata.name not in block_ns]
-
-        pod_count = {namespace: {} for namespace in namespaces}
-
-        for node in list_nodes.items:
-            node_name = node.status.addresses[1].address
-            state[node_name] = node.status.capacity
-            state[node_name]['deployments'] = {}
+        """
+        Get current state of Kubernetes cluster.
+        Raises ApiException if any API call fails.
+        """
+        try:
+            state = {}
+            list_nodes = self.core_api.list_node()
+            all_pods = self.core_api.list_pod_for_all_namespaces()
+            all_namespaces = self.core_api.list_namespace()
             
-            for pod in all_pods.items:
-                if pod.spec.node_name == node_name and pod.metadata.namespace in namespaces:
-                    app_label = pod.metadata.labels.get('app')
-                    if app_label:
+            block_ns = ['kube-node-lease', 'kube-public', 'kube-system', 'kubernetes-dashboard']
+            namespaces = [namespace.metadata.name for namespace in all_namespaces.items if namespace.metadata.name not in block_ns]
+
+            pod_count = {namespace: {} for namespace in namespaces}
+
+            for node in list_nodes.items:
+                # Получаем имя ноды из метаданных
+                node_name = node.metadata.name
+                if not node_name:
+                    logger.warning(f"Node {node.metadata.name} has no name, skipping")
+                    continue
+                    
+                # Получаем емкость ноды
+                capacity = node.status.capacity
+                if not capacity:
+                    logger.warning(f"Node {node_name} has no capacity information, skipping")
+                    continue
+                    
+                state[node_name] = capacity
+                state[node_name]['deployments'] = {}
+                
+                for pod in all_pods.items:
+                    if pod.spec.node_name == node_name and pod.metadata.namespace in namespaces:
+                        # Проверяем наличие меток
+                        if not pod.metadata.labels:
+                            logger.debug(f"Pod {pod.metadata.name} in namespace {pod.metadata.namespace} has no labels")
+                            continue
+                            
+                        app_label = pod.metadata.labels.get('app')
+                        if not app_label:
+                            logger.debug(f"Pod {pod.metadata.name} in namespace {pod.metadata.namespace} has no 'app' label")
+                            continue
+                            
                         namespace = pod.metadata.namespace
                         if app_label not in pod_count[namespace]:
                             pod_count[namespace][app_label] = 1
@@ -67,42 +92,75 @@ class k8s:
                         state[node_name]['deployments'][namespace][app_label] = {
                             'replicas': pod_count[namespace][app_label]
                         }
-        return state
+            
+            if not state:
+                raise Exception("No valid nodes found in the cluster")
+                
+            logger.info(f"Found nodes: {list(state.keys())}")
+            return state
+        except ApiException as e:
+            logger.error(f"Failed to get Kubernetes state: {str(e)}")
+            raise
 
     def k8s_action(self, namespace, deployment_name, replicas, node):
-        deployment = self.app_api.read_namespaced_deployment(
-            name=deployment_name,
-            namespace=namespace
-        )
-        deployment.spec.replicas = replicas
-        deployment.spec.template.spec.node_selector = {
-            "kubernetes.io/hostname" : node
-        }
-
-        self.app_api.patch_namespaced_deployment(
-            name=deployment_name,
-            namespace=namespace,
-            body=deployment
-        )
-        time.sleep(2)
-        while True:
-            self.wait_for_deployment_to_be_ready(namespace, deployment_name)
-            print('Working on ' + node)
-            break
-        pass
-
-    def wait_for_deployment_to_be_ready(self, namespace, deployment_name):
-        while True:
+        """
+        Perform Kubernetes action on deployment.
+        
+        Args:
+            namespace (str): Namespace name
+            deployment_name (str): Deployment name
+            replicas (int): Number of replicas
+            node (str): Target node name
+        """
+        try:
             deployment = self.app_api.read_namespaced_deployment(
                 name=deployment_name,
                 namespace=namespace
             )
-            if deployment.spec.replicas == 0:
-                print("Deployment " + deployment_name + " is scaled to 0.")
+            deployment.spec.replicas = replicas
+            deployment.spec.template.spec.node_selector = {
+                "kubernetes.io/hostname": node
+            }
+
+            self.app_api.patch_namespaced_deployment(
+                name=deployment_name,
+                namespace=namespace,
+                body=deployment
+            )
+            logger.info(f"Updated deployment {deployment_name} to {replicas} replicas on node {node}")
+            
+            time.sleep(2)
+            while True:
+                self.wait_for_deployment_to_be_ready(namespace, deployment_name)
+                logger.info(f'Deployment is now running on node {node}')
                 break
-            elif deployment.status.ready_replicas == deployment.spec.replicas:
-                print("Deployment " + deployment_name + " is ready.")
-                break
-            else:
-                print("Waiting for deployment to be ready...")
-                time.sleep(5)  # Подождать 5 секунд перед следующей проверкой
+        except ApiException as e:
+            logger.error(f"Failed to perform k8s action: {str(e)}")
+            raise
+
+    def wait_for_deployment_to_be_ready(self, namespace, deployment_name):
+        """
+        Wait for deployment to be ready.
+        
+        Args:
+            namespace (str): Namespace name
+            deployment_name (str): Deployment name
+        """
+        while True:
+            try:
+                deployment = self.app_api.read_namespaced_deployment(
+                    name=deployment_name,
+                    namespace=namespace
+                )
+                if deployment.spec.replicas == 0:
+                    logger.info(f"Deployment {deployment_name} is scaled to 0")
+                    break
+                elif deployment.status.ready_replicas == deployment.spec.replicas:
+                    logger.info(f"Deployment {deployment_name} is ready")
+                    break
+                else:
+                    logger.info(f"Waiting for deployment {deployment_name} to be ready...")
+                    time.sleep(5)
+            except ApiException as e:
+                logger.error(f"Failed to check deployment status: {str(e)}")
+                raise

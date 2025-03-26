@@ -9,6 +9,7 @@ from ..core.wandb_config import WandbConfig
 import gymnasium as gym
 from kubernetes import client, config
 from kubernetes.client import CoreV1Api
+from lwmecps_gym.ml.models.q_learn import QLearningAgent
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

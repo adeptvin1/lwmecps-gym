@@ -7,6 +7,7 @@ from time import time
 import bitmath
 import gymnasium as gym
 import numpy as np
+import wandb
 from gymnasium.envs.registration import register
 from lwmecps_gym.envs.kubernetes_api import k8s
 
@@ -19,79 +20,175 @@ class QLearningAgent:
         discount_factor=0.9,
         exploration_rate=1.0,
         exploration_decay=0.98,
+        wandb_run_id=None,
     ):
         self.env = env
+        # Get the original environment by unwrapping all wrappers
+        self.original_env = env
+        while hasattr(self.original_env, 'env'):
+            self.original_env = self.original_env.env
+        
         self.learning_rate = learning_rate
         self.discount_factor = discount_factor
         self.exploration_rate = exploration_rate
         self.exploration_decay = exploration_decay
+        self.wandb_run_id = wandb_run_id
 
         # Инициализация Q-таблицы для каждой ноды и каждого действия
         self.q_table = {
-            node: np.zeros(self.env.action_space.n) for node in self.env.node_name
+            node: np.zeros(self.original_env.action_space.n) for node in self.original_env.node_name
         }
 
+        # Инициализация wandb
+        if self.wandb_run_id:
+            wandb.init(
+                project="lwmecps-gym",
+                id=self.wandb_run_id,
+                config={
+                    "learning_rate": learning_rate,
+                    "discount_factor": discount_factor,
+                    "exploration_rate": exploration_rate,
+                    "exploration_decay": exploration_decay,
+                    "model_type": "q_learning",
+                }
+            )
+
     def save_q_table(self, file_name):
-        with open(file_name, "wb") as f:
-            pickle.dump(self.q_table, f)
-        print(f"Q-таблица сохранена в {file_name}")
+        try:
+            with open(file_name, "wb") as f:
+                pickle.dump(self.q_table, f)
+            print(f"Q-таблица сохранена в {file_name}")
+        except Exception as e:
+            print(f"Ошибка при сохранении Q-таблицы: {str(e)}")
+            raise
 
     def load_q_table(self, file_name):
-        with open(file_name, "rb") as f:
-            self.q_table = pickle.load(f)
-        print(f"Q-таблица загружена из {file_name}")
+        try:
+            with open(file_name, "rb") as f:
+                self.q_table = pickle.load(f)
+            print(f"Q-таблица загружена из {file_name}")
+        except Exception as e:
+            print(f"Ошибка при загрузке Q-таблицы: {str(e)}")
+            raise
 
     def choose_action(self, state):
         node = self.get_current_node(state)
         if random.uniform(0, 1) < self.exploration_rate:
-            return self.env.action_space.sample()  # Исследование
+            return self.original_env.action_space.sample()  # Исследование
         else:
             return np.argmax(self.q_table[node])  # Эксплуатация
 
     def update_q_table(self, state, action, reward, next_state):
-        node = self.get_current_node(state)
-        next_node = self.get_current_node(next_state)
-        best_next_action = np.argmax(self.q_table[next_node])
+        try:
+            node = self.get_current_node(state)
+            next_node = self.get_current_node(next_state)
+            
+            # Проверяем, существуют ли состояния в Q-таблице
+            if node not in self.q_table or next_node not in self.q_table:
+                print(f"Предупреждение: узел {node} или {next_node} не найден в Q-таблице")
+                return
+                
+            best_next_action = np.argmax(self.q_table[next_node])
 
-        # Обновление Q-значения
-        q_value = self.q_table[node][action]
-        self.q_table[node][action] = q_value + self.learning_rate * (
-            reward
-            + self.discount_factor * self.q_table[next_node][best_next_action]
-            - q_value
-        )
+            # Обновление Q-значения
+            q_value = self.q_table[node][action]
+            self.q_table[node][action] = q_value + self.learning_rate * (
+                reward
+                + self.discount_factor * self.q_table[next_node][best_next_action]
+                - q_value
+            )
+
+            # Логируем обновление Q-значения в wandb
+            if self.wandb_run_id:
+                wandb.log({
+                    f"q_value/{node}/{action}": self.q_table[node][action],
+                    f"q_value_change/{node}/{action}": self.q_table[node][action] - q_value,
+                })
+        except Exception as e:
+            print(f"Ошибка при обновлении Q-таблицы: {str(e)}")
+            raise
 
     def get_current_node(self, state):
-        # Получение текущего узла на основе состояния
-        # В данном случае предполагается, что state - это словарь, и мы ищем node по каким-то критериям, например, используя первую ноду в словаре
-        return next(iter(state))  # Берем первую ноду из словаря
+        """
+        Получение текущего узла на основе состояния.
+        Ищем узел, где находится под в данный момент.
+        """
+        try:
+            for node in self.original_env.node_name:
+                if node in state:
+                    namespace_deployments = state[node]["deployments"].get(self.original_env.namespace, {})
+                    deployment_info = namespace_deployments.get(self.original_env.deployment_name, {})
+                    if deployment_info.get("replicas", 0) > 0:
+                        return node
+            # Если под не найден, возвращаем первую ноду
+            return next(iter(state))
+        except Exception as e:
+            print(f"Ошибка при определении текущего узла: {str(e)}")
+            raise
 
     def train(self, episodes):
         episode_latency = {}
         episode_reward = {}
-        for episode in range(episodes):
-            state = self.env.reset()
-            done = False
+        try:
+            for episode in range(episodes):
+                # В Gymnasium reset возвращает (state, info)
+                state, _ = self.env.reset()
+                done = False
+                episode_reward[episode] = 0
+                episode_steps = 0
 
-            while not done:
-                action = self.choose_action(state)
-                next_state, reward, done, info = self.env.step(action)
-                if not done:
+                while not done:
+                    action = self.choose_action(state)
+                    next_state, reward, done, info = self.env.step(action)
+                    if not done:
+                        print(f"Episode {episode + 1}, Reward: {reward}")
+                        self.update_q_table(state, action, reward, next_state)
+                        state = next_state
+                        episode_reward[episode] += reward
+                        episode_latency[episode] = info["latency"]
+                        episode_steps += 1
 
-                    print(reward)
-                    self.update_q_table(state, action, reward, next_state)
-                    state = next_state
-                    episode_latency[episode] = info["latency"]
-                    episode_reward[episode] = reward
+                self.exploration_rate *= self.exploration_decay
+                print(f"Episode {episode + 1}: exploration rate = {self.exploration_rate}")
 
-            self.exploration_rate *= self.exploration_decay
-            print(f"Episode {episode + 1}: exploration rate = {self.exploration_rate}")
+                # Сохраняем модель после каждого эпизода
+                model_file = f"./q_table_episode_{episode}.pkl"
+                self.save_q_table(model_file)
+                
+                # Сохраняем модель в wandb
+                if self.wandb_run_id:
+                    wandb.save(model_file)
+                    # Логируем метрики эпизода в wandb
+                    wandb.log({
+                        "episode": episode,
+                        "episode_reward": episode_reward[episode],
+                        "episode_latency": episode_latency[episode],
+                        "episode_steps": episode_steps,
+                        "exploration_rate": self.exploration_rate,
+                    })
 
-            with open("./q_episode_latency.json", "w") as file:
-                json.dump(episode_latency, file, indent=4)
+                # Сохраняем результаты после каждого эпизода
+                try:
+                    with open("./q_episode_latency.json", "w") as file:
+                        json.dump(episode_latency, file, indent=4)
 
-            with open("./q_episode_reward.json", "w") as file:
-                json.dump(episode_reward, file, indent=4)
+                    with open("./q_episode_reward.json", "w") as file:
+                        json.dump(episode_reward, file, indent=4)
+
+                    # Сохраняем файлы в wandb
+                    if self.wandb_run_id:
+                        wandb.save("./q_episode_latency.json")
+                        wandb.save("./q_episode_reward.json")
+                except Exception as e:
+                    print(f"Ошибка при сохранении результатов эпизода: {str(e)}")
+
+        except Exception as e:
+            print(f"Ошибка во время обучения: {str(e)}")
+            raise
+        finally:
+            # Завершаем сессию wandb
+            if self.wandb_run_id:
+                wandb.finish()
 
 
 if __name__ == "__main__":
