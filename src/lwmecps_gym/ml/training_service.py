@@ -334,7 +334,7 @@ class TrainingService:
             training_result = TrainingResult(
                 task_id=task_id,
                 episode=task.total_episodes,
-                metrics=results,
+                metrics=results["result_metrics"],
                 wandb_run_id=task.wandb_run_id,
                 model_weights_path=model_path
             )
@@ -345,7 +345,7 @@ class TrainingService:
             await self.db.update_training_task(task_id, {
                 "current_episode": task.total_episodes,
                 "progress": 1.0,
-                "metrics": results,
+                "metrics": results["task_metrics"],
                 "state": TrainingState.COMPLETED
             })
             

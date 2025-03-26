@@ -129,44 +129,47 @@ class QLearningAgent:
     def train(self, episodes):
         episode_latency = {}
         episode_reward = {}
+        episode_steps = {}
+        episode_exploration = {}
+        
         try:
             for episode in range(episodes):
-                # В Gymnasium reset возвращает (state, info)
-                state, _ = self.env.reset()
-                done = False
-                episode_reward[episode] = 0
-                episode_steps = 0
-
-                while not done:
+                state = self.env.reset()[0]  # Получаем только observation
+                total_reward = 0
+                steps = 0
+                
+                while True:
                     action = self.choose_action(state)
                     next_state, reward, done, info = self.env.step(action)
-                    if not done:
-                        print(f"Episode {episode + 1}, Reward: {reward}")
-                        self.update_q_table(state, action, reward, next_state)
-                        state = next_state
-                        episode_reward[episode] += reward
-                        episode_latency[episode] = info["latency"]
-                        episode_steps += 1
-
-                self.exploration_rate *= self.exploration_decay
-                print(f"Episode {episode + 1}: exploration rate = {self.exploration_rate}")
-
-                # Сохраняем модель после каждого эпизода
-                model_file = f"./q_table_episode_{episode}.pkl"
-                self.save_q_table(model_file)
+                    self.update_q_table(state, action, reward, next_state)
+                    
+                    total_reward += reward
+                    steps += 1
+                    
+                    if done:
+                        break
+                    
+                    state = next_state
                 
-                # Сохраняем модель в wandb
+                # Сохраняем метрики эпизода
+                episode_latency[episode] = info.get("latency", 0)
+                episode_reward[episode] = total_reward
+                episode_steps[episode] = steps
+                episode_exploration[episode] = self.exploration_rate
+                
+                # Обновляем epsilon
+                self.exploration_rate = max(0.01, self.exploration_rate * self.exploration_decay)
+                
+                # Логируем метрики в wandb
                 if self.wandb_run_id:
-                    wandb.save(model_file)
-                    # Логируем метрики эпизода в wandb
                     wandb.log({
                         "episode": episode,
-                        "episode_reward": episode_reward[episode],
-                        "episode_latency": episode_latency[episode],
-                        "episode_steps": episode_steps,
-                        "exploration_rate": self.exploration_rate,
+                        "total_reward": total_reward,
+                        "steps": steps,
+                        "epsilon": self.exploration_rate,
+                        "latency": info.get("latency", 0)
                     })
-
+                
                 # Сохраняем результаты после каждого эпизода
                 try:
                     with open("./q_episode_latency.json", "w") as file:
@@ -181,6 +184,30 @@ class QLearningAgent:
                         wandb.save("./q_episode_reward.json")
                 except Exception as e:
                     print(f"Ошибка при сохранении результатов эпизода: {str(e)}")
+            
+            # Возвращаем метрики в двух форматах
+            return {
+                # Метрики для TrainingTask (списки)
+                "task_metrics": {
+                    "final_latency": [float(episode_latency.get(episodes - 1, 0))],
+                    "final_reward": [float(episode_reward.get(episodes - 1, 0))],
+                    "final_steps": [float(episode_steps.get(episodes - 1, 0))],
+                    "final_exploration": [float(episode_exploration.get(episodes - 1, 0))],
+                    "avg_latency": [float(sum(episode_latency.values()) / len(episode_latency) if episode_latency else 0)],
+                    "avg_reward": [float(sum(episode_reward.values()) / len(episode_reward) if episode_reward else 0)],
+                    "avg_steps": [float(sum(episode_steps.values()) / len(episode_steps) if episode_steps else 0)]
+                },
+                # Метрики для TrainingResult (числа)
+                "result_metrics": {
+                    "final_latency": float(episode_latency.get(episodes - 1, 0)),
+                    "final_reward": float(episode_reward.get(episodes - 1, 0)),
+                    "final_steps": float(episode_steps.get(episodes - 1, 0)),
+                    "final_exploration": float(episode_exploration.get(episodes - 1, 0)),
+                    "avg_latency": float(sum(episode_latency.values()) / len(episode_latency) if episode_latency else 0),
+                    "avg_reward": float(sum(episode_reward.values()) / len(episode_reward) if episode_reward else 0),
+                    "avg_steps": float(sum(episode_steps.values()) / len(episode_steps) if episode_steps else 0)
+                }
+            }
 
         except Exception as e:
             print(f"Ошибка во время обучения: {str(e)}")
