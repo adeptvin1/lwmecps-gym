@@ -58,6 +58,15 @@ class QLearningAgent:
             with open(file_name, "wb") as f:
                 pickle.dump(self.q_table, f)
             print(f"Q-таблица сохранена в {file_name}")
+            
+            # Save to wandb if initialized
+            if self.wandb_run_id:
+                wandb.save(file_name)
+                # Also save as a wandb artifact
+                artifact = wandb.Artifact('q_table', type='model')
+                artifact.add_file(file_name)
+                wandb.log_artifact(artifact)
+                
         except Exception as e:
             print(f"Ошибка при сохранении Q-таблицы: {str(e)}")
             raise

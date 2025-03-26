@@ -329,6 +329,13 @@ class TrainingService:
             logger.info(f"Saving model to {model_path}")
             agent.save_q_table(model_path)
             
+            # Explicitly save model to wandb
+            if task.wandb_run_id:
+                logger.info("Saving model to wandb")
+                artifact = wandb.Artifact(f'q_table_{task_id}', type='model')
+                artifact.add_file(model_path)
+                wandb.log_artifact(artifact)
+            
             # Save training results
             logger.info("Saving training result to database")
             training_result = TrainingResult(
