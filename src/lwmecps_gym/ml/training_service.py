@@ -204,13 +204,23 @@ class TrainingService:
         if not task:
             raise ValueError(f"Task {task_id} not found")
         
-        # Download model weights from Weights & Biases
+        # Initialize Weights & Bibes for reconciliation
+        init_wandb(self.wandb_config)
+        
+        # Download model weights from Weights & Biases based on model type
         api = wandb.Api()
         run = api.run(f"{self.wandb_config.project_name}/{task.wandb_run_id}")
-        model_weights = run.file("model_weights.pth").download()
         
-        # Initialize Weights & Biases for reconciliation
-        init_wandb(self.wandb_config)
+        if task.model_type == ModelType.Q_LEARNING:
+            # For Q-learning, we need to download the Q-table artifact
+            artifacts = run.logged_artifacts()
+            q_table_artifact = next((art for art in artifacts if art.type == 'model'), None)
+            if not q_table_artifact:
+                raise ValueError("Q-table artifact not found in wandb run")
+            model_weights = q_table_artifact.download()
+        else:
+            # For DQN and other PyTorch models
+            model_weights = run.file("model_weights.pth").download()
         
         # Run reconciliation logic (placeholder implementation)
         metrics = {
