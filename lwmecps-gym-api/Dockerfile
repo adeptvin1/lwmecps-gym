@@ -23,6 +23,9 @@ COPY lwmecps-gym-api /app/lwmecps-gym-api
 # Install the API package in development mode
 RUN cd /app/lwmecps-gym-api && pip install -e .
 
+# Set working directory to the API package
+WORKDIR /app/lwmecps-gym-api
+
 # Expose the port the app runs on
 EXPOSE 8000
 

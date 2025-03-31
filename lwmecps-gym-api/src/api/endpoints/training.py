@@ -1,10 +1,9 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, status
 from typing import List, Dict, Any, Optional
-from ...models.models import TrainingTask, TrainingResult, ReconciliationResult
+from ...models.models import TrainingTask, TrainingResult, ReconciliationResult, TrainingState, PyObjectId
 from ...models.database import Database
 from ...ml.training_service import TrainingService
 import logging
-from bson.objectid import ObjectId
 import os
 
 logger = logging.getLogger(__name__)
@@ -29,19 +28,15 @@ async def get_training_service(
 ) -> TrainingService:
     return TrainingService(db)
 
-def validate_object_id(task_id: str) -> ObjectId:
+def validate_object_id(task_id: str) -> PyObjectId:
     try:
-        return ObjectId(task_id)
+        return PyObjectId(task_id)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid task ID: {str(e)}")
 
-@router.post("/tasks", response_model=TrainingTask)
-async def create_training_task(
-    task_data: Dict[str, Any],
-    service: TrainingService = Depends(get_training_service)
-):
-    """Create a new training task"""
-    return await service.create_training_task(task_data)
+@router.post("/tasks", response_model=TrainingTask, status_code=status.HTTP_201_CREATED)
+async def create_training_task(task: TrainingTask):
+    return await db.create_training_task(task)
 
 @router.get("/tasks", response_model=List[TrainingTask])
 async def list_training_tasks(
@@ -53,86 +48,81 @@ async def list_training_tasks(
     return await db.list_training_tasks(skip, limit)
 
 @router.get("/tasks/{task_id}", response_model=TrainingTask)
-async def get_training_task(
-    task_id: str,
-    db: Database = Depends(get_db)
-):
-    """Get a specific training task"""
-    object_id = validate_object_id(task_id)
-    task = await db.get_training_task(object_id)
+async def get_training_task(task_id: PyObjectId):
+    task = await db.get_training_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     return task
 
-@router.post("/tasks/{task_id}/start", response_model=TrainingTask)
-async def start_training(
-    task_id: str,
-    service: TrainingService = Depends(get_training_service)
-):
-    """Start a training task"""
-    validate_object_id(task_id)
-    task = await service.start_training(task_id)
+@router.post("/tasks/{task_id}/start")
+async def start_training(task_id: PyObjectId):
+    task = await db.get_training_task(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found or cannot be started")
-    return task
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task.state != TrainingState.PENDING:
+        raise HTTPException(status_code=400, detail="Task is not in PENDING state")
+    
+    task.state = TrainingState.RUNNING
+    updated_task = await db.update_training_task(task_id, task)
+    if not updated_task:
+        raise HTTPException(status_code=500, detail="Failed to update task")
+    return {"message": "Training started"}
 
-@router.post("/tasks/{task_id}/pause", response_model=TrainingTask)
-async def pause_training(
-    task_id: str,
-    service: TrainingService = Depends(get_training_service)
-):
-    """Pause a training task"""
-    validate_object_id(task_id)
-    task = await service.pause_training(task_id)
+@router.post("/tasks/{task_id}/pause")
+async def pause_training(task_id: PyObjectId):
+    task = await db.get_training_task(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found or cannot be paused")
-    return task
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task.state != TrainingState.RUNNING:
+        raise HTTPException(status_code=400, detail="Task is not in RUNNING state")
+    
+    task.state = TrainingState.PAUSED
+    updated_task = await db.update_training_task(task_id, task)
+    if not updated_task:
+        raise HTTPException(status_code=500, detail="Failed to update task")
+    return {"message": "Training paused"}
 
-@router.post("/tasks/{task_id}/resume", response_model=TrainingTask)
-async def resume_training(
-    task_id: str,
-    service: TrainingService = Depends(get_training_service)
-):
-    """Resume a paused training task"""
-    validate_object_id(task_id)
-    task = await service.resume_training(task_id)
+@router.post("/tasks/{task_id}/resume")
+async def resume_training(task_id: PyObjectId):
+    task = await db.get_training_task(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found or cannot be resumed")
-    return task
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task.state != TrainingState.PAUSED:
+        raise HTTPException(status_code=400, detail="Task is not in PAUSED state")
+    
+    task.state = TrainingState.RUNNING
+    updated_task = await db.update_training_task(task_id, task)
+    if not updated_task:
+        raise HTTPException(status_code=500, detail="Failed to update task")
+    return {"message": "Training resumed"}
 
-@router.post("/tasks/{task_id}/stop", response_model=TrainingTask)
-async def stop_training(
-    task_id: str,
-    service: TrainingService = Depends(get_training_service)
-):
-    """Stop a training task"""
-    validate_object_id(task_id)
-    task = await service.stop_training(task_id)
+@router.post("/tasks/{task_id}/stop")
+async def stop_training(task_id: PyObjectId):
+    task = await db.get_training_task(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found or cannot be stopped")
-    return task
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task.state not in [TrainingState.RUNNING, TrainingState.PAUSED]:
+        raise HTTPException(status_code=400, detail="Task is not in RUNNING or PAUSED state")
+    
+    task.state = TrainingState.COMPLETED
+    updated_task = await db.update_training_task(task_id, task)
+    if not updated_task:
+        raise HTTPException(status_code=500, detail="Failed to update task")
+    return {"message": "Training stopped"}
 
 @router.get("/tasks/{task_id}/results", response_model=List[TrainingResult])
-async def get_training_results(
-    task_id: str,
-    db: Database = Depends(get_db)
-):
-    """Get training results for a task"""
-    object_id = validate_object_id(task_id)
-    return await db.get_training_results(object_id)
+async def get_training_results(task_id: PyObjectId):
+    task = await db.get_training_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return await db.get_training_results(task_id)
 
-@router.post("/tasks/{task_id}/reconcile", response_model=ReconciliationResult)
-async def run_reconciliation(
-    task_id: str,
-    sample_size: int,
-    service: TrainingService = Depends(get_training_service)
-):
-    """Run model reconciliation on new data"""
-    validate_object_id(task_id)
-    try:
-        return await service.run_reconciliation(task_id, sample_size)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+@router.get("/tasks/{task_id}/reconciliation", response_model=List[ReconciliationResult])
+async def get_reconciliation_results(task_id: PyObjectId):
+    task = await db.get_training_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return await db.get_reconciliation_results(task_id)
 
 @router.get("/tasks/{task_id}/progress")
 async def get_training_progress(

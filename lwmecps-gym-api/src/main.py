@@ -7,7 +7,7 @@ from prometheus_client import make_asgi_app
 
 from .api.router import router as api_router
 from .models.config import settings
-from .models.database import Database
+from .models.database import db
 
 app = FastAPI(
     title="LWMECPS GYM API",
@@ -33,13 +33,11 @@ app.include_router(api_router, prefix="/api")
 # События приложения
 @app.on_event("startup")
 async def startup_db_client():
-    db = Database()
-    await db.connect()
+    await db.connect_to_database()
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
-    db = Database()
-    await db.close()
+    await db.close_database_connection()
 
 # Обработка ошибок
 @app.exception_handler(ValidationError)
