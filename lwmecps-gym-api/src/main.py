@@ -1,18 +1,18 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 import uvicorn
 from prometheus_client import make_asgi_app
 
-from .api.router import router as api_router
+from .api.routes import api_router
 from .models.config import settings
 from .models.database import db
 
 app = FastAPI(
-    title="LWMECPS GYM API",
-    description="API для обучения моделей машинного обучения",
-    version="0.0.1"
+    title="LWME CPS Gym API",
+    description="API for LWME CPS Gym training and evaluation",
+    version="1.0.0"
 )
 
 metrics_app = make_asgi_app()
@@ -32,32 +32,34 @@ app.include_router(api_router, prefix="/api")
 
 # События приложения
 @app.on_event("startup")
-async def startup_db_client():
+async def startup_event():
+    """Initialize database connection on startup."""
     await db.connect_to_database()
 
 @app.on_event("shutdown")
-async def shutdown_db_client():
+async def shutdown_event():
+    """Close database connection on shutdown."""
     await db.close_database_connection()
 
 # Обработка ошибок
 @app.exception_handler(ValidationError)
-async def validation_exception_handler(request, exc):
+async def validation_exception_handler(request: Request, exc: ValidationError):
+    """Handle validation errors."""
     return JSONResponse(
         status_code=422,
-        content={"detail": str(exc)},
+        content={"detail": exc.errors()}
     )
 
 # Корневой эндпоинт
 @app.get("/")
 async def root():
-    return {
-        "message": "Welcome to LWMECPS GYM API",
-        "docs": "/docs"
-    }
+    """Root endpoint."""
+    return {"message": "Welcome to LWME CPS Gym API"}
 
 # Add health check endpoint
 @app.get("/health")
 async def health_check():
+    """Health check endpoint."""
     return {"status": "healthy"}
 
 if __name__ == "__main__":

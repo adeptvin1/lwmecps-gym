@@ -8,22 +8,31 @@ from .config import settings
 logger = logging.getLogger(__name__)
 
 class Database:
-    client: AsyncIOMotorClient = None
-    db: AsyncIOMotorDatabase = None
+    def __init__(self):
+        self.client = None
+        self.db = None
 
     async def connect_to_database(self):
+        """Connect to MongoDB."""
         try:
             self.client = AsyncIOMotorClient(settings.mongodb_uri)
             self.db = self.client[settings.mongodb_db]
-            logger.info("Connected to MongoDB")
+            # Test the connection
+            await self.client.admin.command('ping')
+            logger.info("Successfully connected to MongoDB.")
         except Exception as e:
-            logger.error(f"Failed to connect to MongoDB: {str(e)}")
+            logger.error(f"Failed to connect to MongoDB: {e}")
             raise
 
     async def close_database_connection(self):
+        """Close the database connection."""
         if self.client:
             self.client.close()
-            logger.info("Closed MongoDB connection")
+            logger.info("Database connection closed.")
+
+    async def close(self):
+        """Alias for close_database_connection for compatibility."""
+        await self.close_database_connection()
 
     async def create_training_task(self, task: TrainingTask) -> TrainingTask:
         try:
