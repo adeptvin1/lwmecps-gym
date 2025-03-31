@@ -7,18 +7,24 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first to leverage Docker cache
-COPY requirements.txt .
+# Copy core package first
+COPY lwmecps-gym-core /app/lwmecps-gym-core
+
+# Install core package
+RUN cd /app/lwmecps-gym-core && pip install -e .
+
+# Copy API package requirements first to leverage Docker cache
+COPY lwmecps-gym-api/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application
-COPY . .
+# Copy the rest of the API application
+COPY lwmecps-gym-api /app/lwmecps-gym-api
 
-# Install the package in development mode
-RUN pip install -e .
+# Install the API package in development mode
+RUN cd /app/lwmecps-gym-api && pip install -e .
 
 # Expose the port the app runs on
 EXPOSE 8000
 
 # Command to run the application
-CMD ["uvicorn", "lwmecps_gym_api.main:app", "--host", "0.0.0.0", "--port", "8000"] 
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"] 
