@@ -1,0 +1,92 @@
+from datetime import datetime
+from typing import Optional, List, Dict, Any, Annotated
+from pydantic import BaseModel, Field, BeforeValidator
+from enum import Enum
+from bson import ObjectId
+
+def validate_object_id(v: Any) -> ObjectId:
+    if isinstance(v, ObjectId):
+        return v
+    if isinstance(v, str):
+        return ObjectId(v)
+    raise ValueError("Invalid ObjectId")
+
+PyObjectId = Annotated[ObjectId, BeforeValidator(validate_object_id)]
+
+class TrainingState(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    PAUSED = "paused"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+class ModelType(str, Enum):
+    DQN = "dqn"
+    PPO = "ppo"
+    A2C = "a2c"
+    SAC = "sac"
+
+class TrainingTask(BaseModel):
+    """MongoDB model for training tasks"""
+    id: Optional[PyObjectId] = Field(default=None, alias="_id")
+    name: str
+    description: Optional[str] = None
+    model_type: ModelType
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+    state: TrainingState = TrainingState.PENDING
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    wandb_run_id: Optional[str] = None
+    current_episode: int = 0
+    total_episodes: int
+    progress: float = 0.0
+    metrics: Dict[str, float] = Field(default_factory=dict)
+    error_message: Optional[str] = None
+
+    model_config = {
+        "allow_population_by_field_name": True,
+        "json_encoders": {
+            datetime: lambda v: v.isoformat(),
+            ObjectId: str
+        },
+        "arbitrary_types_allowed": True
+    }
+
+class TrainingResult(BaseModel):
+    """MongoDB model for training results"""
+    id: Optional[PyObjectId] = Field(default=None, alias="_id")
+    task_id: PyObjectId
+    episode: int
+    metrics: Dict[str, float]
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    model_weights_path: Optional[str] = None
+    wandb_run_id: str
+
+    model_config = {
+        "allow_population_by_field_name": True,
+        "json_encoders": {
+            datetime: lambda v: v.isoformat(),
+            ObjectId: str
+        },
+        "arbitrary_types_allowed": True
+    }
+
+class ReconciliationResult(BaseModel):
+    """MongoDB model for model reconciliation results"""
+    id: Optional[PyObjectId] = Field(default=None, alias="_id")
+    task_id: PyObjectId
+    model_type: ModelType
+    wandb_run_id: str
+    metrics: Dict[str, float]
+    sample_size: int
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    model_weights_path: str
+
+    model_config = {
+        "allow_population_by_field_name": True,
+        "json_encoders": {
+            datetime: lambda v: v.isoformat(),
+            ObjectId: str
+        },
+        "arbitrary_types_allowed": True
+    } 

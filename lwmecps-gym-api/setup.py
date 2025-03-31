@@ -1,0 +1,36 @@
+from setuptools import setup, find_packages
+
+setup(
+    name="lwmecps-gym-api",
+    version="0.0.1",
+    packages=find_packages(where="src"),
+    package_dir={"": "src"},
+    install_requires=[
+        "fastapi>=0.68.0",
+        "uvicorn>=0.15.0",
+        "pydantic>=2.0.0",
+        "pydantic-settings>=2.0.0",
+        "motor>=3.0.0",
+        "wandb>=0.12.0",
+        "python-dotenv>=0.19.0",
+        "prometheus-client>=0.12.0",
+        "lwmecps-gym-core>=0.1.0",
+    ],
+    python_requires=">=3.8",
+    author="Ivan Filanin",
+    author_email="ivan.filanin@example.com",
+    description="API for LWMECPS GYM ML model training",
+    long_description=open("README.md").read(),
+    long_description_content_type="text/markdown",
+    url="https://github.com/ivanfilanin/lwmecps-gym",
+    classifiers=[
+        "Development Status :: 3 - Alpha",
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: MIT License",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+    ],
+) 

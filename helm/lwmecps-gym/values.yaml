@@ -3,7 +3,7 @@
 replicaCount: 1
 
 image:
-  repository: adeptvin4/lwmecps-gym
+  repository: adeptvin4/lwmecps-gym-api
   pullPolicy: Always
   tag: "latest"
 
@@ -12,7 +12,7 @@ fullnameOverride: ""
 
 serviceAccount:
   create: true
-  name: "lwmecps-gym"
+  name: "lwmecps-gym-api"
   annotations: {}
 
 podAnnotations: {}
@@ -23,7 +23,7 @@ securityContext: {}
 
 service:
   type: ClusterIP
-  port: 8010
+  port: 8000
 
 ingress:
   enabled: false
@@ -86,6 +86,26 @@ wandb:
   apiKey: ""
   projectName: "lwmecps-gym"
   entity: ""
+
+# API configuration
+api:
+  env:
+    - name: MONGODB_URI
+      value: "mongodb://lwmecps-gym-mongodb-service:27017"
+    - name: MONGODB_DB
+      value: "lwmecps_gym"
+    - name: WANDB_API_KEY
+      valueFrom:
+        secretKeyRef:
+          name: wandb-secret
+          key: api-key
+    - name: WANDB_PROJECT
+      value: "lwmecps-gym"
+    - name: WANDB_ENTITY
+      valueFrom:
+        secretKeyRef:
+          name: wandb-secret
+          key: entity
 
 # Training configuration
 training:
