@@ -35,7 +35,7 @@ jobs:
     - name: Build and push API image
       uses: docker/build-push-action@v4
       with:
-        context: ./lwmecps-gym-api
+        context: .
         file: ./lwmecps-gym-api/Dockerfile
         push: ${{ github.event_name != 'pull_request' }}
         tags: ${{ secrets.DOCKERHUB_USERNAME }}/lwmecps-gym-api:${{ github.sha }},${{ secrets.DOCKERHUB_USERNAME }}/lwmecps-gym-api:latest
