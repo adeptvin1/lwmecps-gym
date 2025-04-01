@@ -228,7 +228,9 @@ class PPO:
             while not self.buffer.is_full():
                 action, log_prob, value = self.select_action(state)
                 next_state, reward, done, info = env.step(action)
-                self.buffer.add(state, action, reward, value, log_prob, done)
+                # Преобразуем состояние в плоский массив перед добавлением в буфер
+                flattened_state = self._flatten_observation(state)
+                self.buffer.add(flattened_state, action, reward, value, log_prob, done)
                 state = next_state
                 episode_reward += reward
                 episode_length += 1
