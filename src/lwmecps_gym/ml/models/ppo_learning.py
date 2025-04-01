@@ -172,11 +172,16 @@ class PPO:
                     obs[node]["avg_latency"]
                 ])
                 # Добавляем метрики развертываний
-                for deployment in self.deployments:
-                    if deployment in obs[node]["deployments"]:
-                        obs_array.append(obs[node]["deployments"][deployment]["replicas"])
-                    else:
-                        obs_array.append(0.0)  # Если развертывание отсутствует, используем 0
+                if "deployments" in obs[node]:
+                    for deployment in self.deployments:
+                        if deployment in obs[node]["deployments"]:
+                            obs_array.append(obs[node]["deployments"][deployment]["replicas"])
+                        else:
+                            obs_array.append(0.0)  # Если развертывание отсутствует, используем 0
+                else:
+                    # Если нет информации о развертываниях, добавляем нули
+                    for _ in self.deployments:
+                        obs_array.append(0.0)
             return np.array(obs_array, dtype=np.float32)
         elif isinstance(obs, tuple):
             # Если наблюдение - кортеж, берем первый элемент (обычно это словарь)
