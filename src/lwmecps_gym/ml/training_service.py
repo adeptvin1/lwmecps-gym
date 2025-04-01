@@ -19,6 +19,7 @@ from gymnasium import spaces
 import torch
 import re
 import bitmath
+from lwmecps_gym.k8s import k8s
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -303,6 +304,7 @@ class TrainingService:
         try:
             # Get Kubernetes cluster state
             logger.info("Getting Kubernetes state...")
+            k8s_client = k8s()
             nodes = self.k8s_client.list_node()
             node_names = [node.metadata.name for node in nodes.items]
             logger.info(f"Found nodes: {node_names}")
@@ -329,7 +331,7 @@ class TrainingService:
             
             # Get node info from Kubernetes state
             node_info = {}
-            state = self.k8s_client.k8s_state()
+            state = k8s_client.k8s_state()
             for node in node_names:
                 if node in state:
                     node_info[node] = {
