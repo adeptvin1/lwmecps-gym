@@ -368,11 +368,16 @@ class TrainingService:
                 obs_dim = 0
                 for space in env.observation_space.spaces.values():
                     if space is not None:
-                        if hasattr(space, 'shape'):
-                            obs_dim += space.shape[0]
-                        elif isinstance(space, spaces.Box):
+                        if isinstance(space, spaces.Box):
                             obs_dim += np.prod(space.shape)
+                        elif isinstance(space, spaces.Discrete):
+                            obs_dim += 1
+                        elif isinstance(space, spaces.MultiDiscrete):
+                            obs_dim += np.sum(space.nvec)
+                        elif isinstance(space, spaces.MultiBinary):
+                            obs_dim += space.n
                         else:
+                            # For other space types, assume dimension of 1
                             obs_dim += 1
                 
                 act_dim = env.action_space.n
