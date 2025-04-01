@@ -364,21 +364,25 @@ class TrainingService:
                 agent.save(model_path)
             elif task.model_type == ModelType.PPO:
                 # Get observation and action space dimensions
-                # For Dict observation space, we need to calculate total dimensions
                 obs_dim = 0
-                for space in env.observation_space.spaces.values():
-                    if space is not None:
-                        if isinstance(space, spaces.Box):
-                            obs_dim += np.prod(space.shape)
-                        elif isinstance(space, spaces.Discrete):
-                            obs_dim += 1
-                        elif isinstance(space, spaces.MultiDiscrete):
-                            obs_dim += np.sum(space.nvec)
-                        elif isinstance(space, spaces.MultiBinary):
-                            obs_dim += space.n
-                        else:
-                            # For other space types, assume dimension of 1
-                            obs_dim += 1
+                if isinstance(env.observation_space, spaces.Box):
+                    obs_dim = np.prod(env.observation_space.shape)
+                elif isinstance(env.observation_space, spaces.Dict):
+                    for space in env.observation_space.spaces.values():
+                        if space is not None:
+                            if isinstance(space, spaces.Box):
+                                obs_dim += np.prod(space.shape)
+                            elif isinstance(space, spaces.Discrete):
+                                obs_dim += 1
+                            elif isinstance(space, spaces.MultiDiscrete):
+                                obs_dim += np.sum(space.nvec)
+                            elif isinstance(space, spaces.MultiBinary):
+                                obs_dim += space.n
+                            else:
+                                # For other space types, assume dimension of 1
+                                obs_dim += 1
+                else:
+                    raise ValueError(f"Unsupported observation space type: {type(env.observation_space)}")
                 
                 act_dim = env.action_space.n
                 # Map task parameters to PPO constructor parameters
