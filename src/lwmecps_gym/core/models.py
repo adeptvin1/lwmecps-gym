@@ -34,6 +34,8 @@ class TrainingTask(BaseModel):
     description: Optional[str] = None
     model_type: ModelType
     parameters: Dict[str, Any] = Field(default_factory=dict)
+    env_config: Dict[str, Any] = Field(default_factory=dict)
+    model_config: Dict[str, Any] = Field(default_factory=dict)
     state: TrainingState = TrainingState.PENDING
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -43,6 +45,7 @@ class TrainingTask(BaseModel):
     progress: float = 0.0
     metrics: Dict[str, List[float]] = Field(default_factory=dict)
     error_message: Optional[str] = None
+    model_path: Optional[str] = None
 
     model_config = {
         "allow_population_by_field_name": True,
