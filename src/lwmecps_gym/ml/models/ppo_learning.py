@@ -6,9 +6,11 @@ import gymnasium as gym
 from torch.distributions.categorical import Categorical
 import numpy as np
 from gymnasium import spaces
+import logging
 
 # TODO: Добавить ENV LWMECPSEnv2
 
+logger = logging.getLogger(__name__)
 
 class ActorCritic(nn.Module):
     def __init__(self, obs_dim, act_dim, hidden_size=64):
@@ -207,56 +209,117 @@ class PPO:
         # Буфер
         self.buffer = RolloutBuffer(n_steps, obs_dim)
 
+    def _flatten_observation(self, obs_dict):
+        """
+        Flatten the dictionary observation into a single vector.
+        """
+        try:
+            flattened = []
+            for node, node_data in obs_dict.items():
+                # Add hardware metrics
+                for metric in ['cpu', 'ram', 'tx_bandwidth', 'rx_bandwidth', 
+                             'read_disks_bandwidth', 'write_disks_bandwidth', 'avg_latency']:
+                    if metric not in node_data:
+                        logger.warning(f"Missing metric {metric} for node {node}, using 0")
+                        flattened.append(0.0)
+                    else:
+                        flattened.append(float(node_data[metric]))
+                
+                # Add deployment metrics
+                if 'deployments' not in node_data:
+                    logger.warning(f"Missing deployments for node {node}, using 0")
+                    for _ in self.deployments:
+                        flattened.append(0.0)
+                else:
+                    for deployment in self.deployments:
+                        if deployment not in node_data['deployments']:
+                            logger.warning(f"Missing deployment {deployment} for node {node}, using 0")
+                            flattened.append(0.0)
+                        else:
+                            replicas = node_data['deployments'][deployment].get('replicas', 0)
+                            flattened.append(float(replicas))
+            
+            return np.array(flattened, dtype=np.float32)
+        except Exception as e:
+            logger.error(f"Error flattening observation: {str(e)}")
+            raise
+
     def select_action(self, state):
         """
         Выбираем действие (action) из политики в режиме training.
-        state: np.array(obs_dim) — одномерный вектор наблюдения.
+        state: dict или np.array(obs_dim) — наблюдение.
         Возвращаем: action, log_prob, value
         """
-        state_t = torch.tensor(state, dtype=torch.float32).to(self.device)
-        # batch размером [1, obs_dim]
-        state_t = state_t.unsqueeze(0)
+        try:
+            # Convert dict observation to flat vector if needed
+            if isinstance(state, dict):
+                state = self._flatten_observation(state)
+            
+            # Validate observation dimensions
+            if len(state) != self.obs_dim:
+                raise ValueError(f"Observation dimension mismatch. Expected {self.obs_dim}, got {len(state)}")
+            
+            state_t = torch.tensor(state, dtype=torch.float32).to(self.device)
+            # batch размером [1, obs_dim]
+            state_t = state_t.unsqueeze(0)
 
-        with torch.no_grad():
-            action, log_prob, dist, value = self.model.get_action_and_value(state_t)
+            with torch.no_grad():
+                action, log_prob, dist, value = self.model.get_action_and_value(state_t)
 
-        return (action.item(), log_prob.cpu().item(), value.cpu().item())
+            return (action.item(), log_prob.cpu().item(), value.cpu().item())
+        except Exception as e:
+            logger.error(f"Error in select_action: {str(e)}")
+            raise
 
     def collect_trajectories(self, env):
         """
         Собираем n_steps переходов в буфер (self.buffer).
         Затем считаем GAE.
         """
-        self.buffer.reset()
+        try:
+            self.buffer.reset()
 
-        # Начинаем с нового эпизода
-        state = env.reset()
+            # Начинаем с нового эпизода
+            state = env.reset()
+            if isinstance(state, tuple):
+                state = state[0]  # Handle new gymnasium reset return format
 
-        for t in range(self.n_steps):
-            action, log_prob, value = self.select_action(state)
-            next_state, reward, done, info = env.step(action)
+            for t in range(self.n_steps):
+                try:
+                    action, log_prob, value = self.select_action(state)
+                    next_state, reward, done, info = env.step(action)
 
-            self.buffer.store(state, action, reward, done, log_prob, value)
+                    self.buffer.store(state, action, reward, done, log_prob, value)
 
-            state = next_state
+                    state = next_state
 
-            if done:
-                # начинаем новый эпизод, если эпизод закончился
-                state = env.reset()
+                    if done:
+                        # начинаем новый эпизод, если эпизод закончился
+                        state = env.reset()
+                        if isinstance(state, tuple):
+                            state = state[0]  # Handle new gymnasium reset return format
+                except Exception as e:
+                    logger.error(f"Error in trajectory collection step {t}: {str(e)}")
+                    raise
 
-        # Получим V(s_{t+1}) для последнего состояния (или 0, если done)
-        # Здесь берём последнее состояние из буфера (или текущее state)
-        if not done:
-            with torch.no_grad():
-                next_state_t = torch.tensor(state, dtype=torch.float32).to(self.device)
-                next_state_t = next_state_t.unsqueeze(0)
-                _, _, _, last_value = self.model.get_action_and_value(next_state_t)
-                last_value = last_value.cpu().item()
-        else:
-            last_value = 0.0
+            # Получим V(s_{t+1}) для последнего состояния (или 0, если done)
+            # Здесь берём последнее состояние из буфера (или текущее state)
+            if not done:
+                with torch.no_grad():
+                    if isinstance(state, dict):
+                        state = self._flatten_observation(state)
+                    next_state_t = torch.tensor(state, dtype=torch.float32).to(self.device)
+                    next_state_t = next_state_t.unsqueeze(0)
+                    _, _, _, last_value = self.model.get_action_and_value(next_state_t)
+                    last_value = last_value.cpu().item()
+            else:
+                last_value = 0.0
 
-        # Считаем advantages
-        self.buffer.compute_advantages(last_value, gamma=self.gamma, lam=self.lam)
+            # Считаем advantages
+            self.buffer.compute_advantages(last_value, gamma=self.gamma, lam=self.lam)
+        except Exception as e:
+            logger.error(f"Error in collect_trajectories: {str(e)}")
+            raise
 
     def update(self):
         """
