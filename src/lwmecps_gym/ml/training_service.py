@@ -17,6 +17,8 @@ from lwmecps_gym.envs import LWMECPSEnv
 import numpy as np
 from gymnasium import spaces
 import torch
+import re
+import bitmath
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -299,34 +301,66 @@ class TrainingService:
             task (TrainingTask): Объект задачи обучения
         """
         try:
-            # Создание среды
+            # Get Kubernetes cluster state
+            logger.info("Getting Kubernetes state...")
+            nodes = self.k8s_client.list_node()
+            node_names = [node.metadata.name for node in nodes.items]
+            logger.info(f"Found nodes: {node_names}")
+            
+            # Define environment parameters
+            max_hardware = {
+                "cpu": 8,
+                "ram": 16000,
+                "tx_bandwidth": 1000,
+                "rx_bandwidth": 1000,
+                "read_disks_bandwidth": 500,
+                "write_disks_bandwidth": 500,
+                "avg_latency": 300,
+            }
+            
+            pod_usage = {
+                "cpu": 2,
+                "ram": 2000,
+                "tx_bandwidth": 20,
+                "rx_bandwidth": 20,
+                "read_disks_bandwidth": 100,
+                "write_disks_bandwidth": 100,
+            }
+            
+            # Get node info from Kubernetes state
+            node_info = {}
+            state = self.k8s_client.k8s_state()
+            for node in node_names:
+                if node in state:
+                    node_info[node] = {
+                        "cpu": int(state[node]["cpu"]),
+                        "ram": round(
+                            bitmath.KiB(int(re.findall(r"\d+", state[node]["memory"])[0]))
+                            .to_MB()
+                            .value
+                        ),
+                        "tx_bandwidth": 100,
+                        "rx_bandwidth": 100,
+                        "read_disks_bandwidth": 300,
+                        "write_disks_bandwidth": 300,
+                        "avg_latency": 10 + node_names.index(node) * 10,
+                    }
+            
+            # Create Gym environment
+            logger.info("Creating Gym environment...")
             env = gym.make(
                 "lwmecps-v0",
-                num_nodes=task.env_config.get("num_nodes", 3),
-                node_name=task.env_config.get("node_name", ["node1", "node2", "node3"]),
-                max_hardware=task.env_config.get("max_hardware", {
-                    "cpu": 8,
-                    "ram": 16000,
-                    "tx_bandwidth": 1000,
-                    "rx_bandwidth": 1000,
-                    "read_disks_bandwidth": 500,
-                    "write_disks_bandwidth": 500,
-                    "avg_latency": 300
-                }),
-                pod_usage=task.env_config.get("pod_usage", {
-                    "cpu": 2,
-                    "ram": 2000,
-                    "tx_bandwidth": 20,
-                    "rx_bandwidth": 20,
-                    "read_disks_bandwidth": 100,
-                    "write_disks_bandwidth": 100
-                }),
-                node_info=task.env_config.get("node_info", {}),
+                num_nodes=len(node_names),
+                node_name=node_names,
+                max_hardware=max_hardware,
+                pod_usage=pod_usage,
+                node_info=node_info,
                 deployment_name=task.env_config.get("deployment_name", "mec-test-app"),
                 namespace=task.env_config.get("namespace", "default"),
                 deployments=task.env_config.get("deployments", ["mec-test-app"]),
-                max_pods=task.env_config.get("max_pods", 10000)
+                max_pods=task.env_config.get("max_pods", 10000),
             )
+            logger.info("Environment created successfully")
 
             # Получение размерностей пространств
             obs_dim = 0
