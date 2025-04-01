@@ -152,44 +152,32 @@ class PPO:
         self.buffer = RolloutBuffer(n_steps, obs_dim)
 
     def _flatten_observation(self, obs):
-        """
-        Handle observation which can be either numpy array or dict
-        """
-        try:
-            if isinstance(obs, np.ndarray):
-                return obs
-            elif isinstance(obs, dict):
-                flattened = []
-                for node, node_data in obs.items():
-                    # Add hardware metrics
-                    for metric in ['cpu', 'ram', 'tx_bandwidth', 'rx_bandwidth', 
-                                 'read_disks_bandwidth', 'write_disks_bandwidth', 'avg_latency']:
-                        if metric not in node_data:
-                            logger.warning(f"Missing metric {metric} for node {node}, using 0")
-                            flattened.append(0.0)
-                        else:
-                            flattened.append(float(node_data[metric]))
-                    
-                    # Add deployment metrics
-                    if 'deployments' not in node_data:
-                        logger.warning(f"Missing deployments for node {node}, using 0")
-                        for _ in self.deployments:
-                            flattened.append(0.0)
-                    else:
-                        for deployment in self.deployments:
-                            if deployment not in node_data['deployments']:
-                                logger.warning(f"Missing deployment {deployment} for node {node}, using 0")
-                                flattened.append(0.0)
-                            else:
-                                replicas = node_data['deployments'][deployment].get('replicas', 0)
-                                flattened.append(float(replicas))
-                
-                return np.array(flattened, dtype=np.float32)
-            else:
-                raise ValueError(f"Unsupported observation type: {type(obs)}")
-        except Exception as e:
-            logger.error(f"Error flattening observation: {str(e)}")
-            raise
+        """Преобразует наблюдение в плоский массив"""
+        if isinstance(obs, np.ndarray):
+            return obs
+        elif isinstance(obs, dict):
+            # Словарь с метриками оборудования и развертываний
+            obs_array = []
+            for node in self.deployments:
+                # Добавляем метрики оборудования
+                obs_array.extend([
+                    obs[node]["cpu"],
+                    obs[node]["ram"],
+                    obs[node]["tx_bandwidth"],
+                    obs[node]["rx_bandwidth"],
+                    obs[node]["read_disks_bandwidth"],
+                    obs[node]["write_disks_bandwidth"],
+                    obs[node]["avg_latency"]
+                ])
+                # Добавляем метрики развертываний
+                for deployment in self.deployments:
+                    obs_array.append(obs[node]["deployments"][deployment]["replicas"])
+            return np.array(obs_array, dtype=np.float32)
+        elif isinstance(obs, tuple):
+            # Если наблюдение - кортеж, берем первый элемент (обычно это словарь)
+            return self._flatten_observation(obs[0])
+        else:
+            raise ValueError(f"Unsupported observation type: {type(obs)}")
 
     def select_action(self, state):
         """
