@@ -19,7 +19,7 @@ from gymnasium import spaces
 import torch
 import re
 import bitmath
-from lwmecps_gym.k8s import k8s
+from lwmecps_gym.envs.kubernetes_api import k8s
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
