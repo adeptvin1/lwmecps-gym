@@ -251,16 +251,20 @@ class PPO:
         Возвращаем: action, log_prob, value
         """
         try:
-            # Convert dict observation to flat vector if needed
-            if isinstance(state, dict):
+            # If state is already a numpy array, use it directly
+            if isinstance(state, np.ndarray):
+                state_t = torch.tensor(state, dtype=torch.float32).to(self.device)
+            # If state is a dict, flatten it
+            elif isinstance(state, dict):
                 state = self._flatten_observation(state)
+                state_t = torch.tensor(state, dtype=torch.float32).to(self.device)
+            else:
+                raise ValueError(f"Unsupported state type: {type(state)}")
             
             # Validate observation dimensions
-            if len(state) != self.obs_dim:
-                raise ValueError(f"Observation dimension mismatch. Expected {self.obs_dim}, got {len(state)}")
+            if len(state_t) != self.obs_dim:
+                raise ValueError(f"Observation dimension mismatch. Expected {self.obs_dim}, got {len(state_t)}")
             
-            state_t = torch.tensor(state, dtype=torch.float32).to(self.device)
-            # batch размером [1, obs_dim]
             state_t = state_t.unsqueeze(0)
 
             with torch.no_grad():
