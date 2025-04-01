@@ -4,52 +4,69 @@ import torch.optim as optim
 import numpy as np
 from gymnasium import spaces
 import logging
-from typing import List
+from typing import List, Dict, Union, Tuple
 
 from lwmecps_gym.envs import LWMECPSEnv
 
 logger = logging.getLogger(__name__)
 
 class ActorCritic(nn.Module):
+    """
+    Архитектура нейронной сети для PPO, состоящая из двух частей:
+    1. Actor (политика) - определяет распределение действий
+    2. Critic (функция ценности) - оценивает ожидаемую награду
+    
+    Args:
+        obs_dim (int): Размерность вектора наблюдения
+        act_dim (int): Размерность пространства действий
+        hidden_size (int): Размер скрытых слоев
+    """
     def __init__(self, obs_dim, act_dim, hidden_size=64):
-        """
-        obs_dim  : размерность вектора наблюдения
-        act_dim  : размерность (число возможных действий)
-        hidden_size: размер скрытых слоёв
-        """
         super().__init__()
 
-        # Актер (Policy)
+        # Актер (Policy) - определяет распределение действий
         self.actor = nn.Sequential(
             nn.Linear(obs_dim, hidden_size),
-            nn.Tanh(),
+            nn.Tanh(),  # Tanh для лучшей стабильности обучения
             nn.Linear(hidden_size, hidden_size),
             nn.Tanh(),
             nn.Linear(hidden_size, act_dim),
-            nn.Softmax(dim=-1)
+            nn.Softmax(dim=-1)  # Преобразует выход в вероятности действий
         )
 
-        # Критик (Value function)
+        # Критик (Value function) - оценивает ожидаемую награду
         self.critic = nn.Sequential(
             nn.Linear(obs_dim, hidden_size),
             nn.Tanh(),
             nn.Linear(hidden_size, hidden_size),
             nn.Tanh(),
-            nn.Linear(hidden_size, 1)
+            nn.Linear(hidden_size, 1)  # Одна выходная величина - оценка ценности состояния
         )
 
     def forward(self, x):
+        """
+        Прямой проход через сеть.
+        
+        Args:
+            x (torch.Tensor): Входной тензор состояния
+            
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]: (распределение действий, оценка ценности)
+        """
         action_probs = self.actor(x)
         value = self.critic(x)
         return action_probs, value
 
     def get_action_and_value(self, x):
         """
-        Для заданного x возвращаем:
-          - action (выбор из act_dim)
-          - log_prob(action)
-          - value (V(x))
-          - распределение dist
+        Получение действия, его логарифмической вероятности и оценки ценности.
+        
+        Args:
+            x (torch.Tensor): Входной тензор состояния
+            
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor, torch.distributions.Distribution, torch.Tensor]:
+                (действие, log_prob, распределение, оценка ценности)
         """
         action_probs, value = self(x)
         dist = torch.distributions.Categorical(action_probs)
@@ -59,16 +76,21 @@ class ActorCritic(nn.Module):
 
 
 class RolloutBuffer:
+    """
+    Буфер для хранения траекторий опыта.
+    Используется для сбора данных перед обновлением политики.
+    
+    Args:
+        n_steps (int): Количество шагов для сбора перед обновлением
+        obs_dim (int): Размерность вектора наблюдения
+    """
     def __init__(self, n_steps, obs_dim):
-        """
-        n_steps: сколько шагов опыта мы собираем перед обновлением (n_steps)
-        obs_dim: размер вектора наблюдения
-        """
         self.n_steps = n_steps
         self.obs_dim = obs_dim
         self.reset()
 
     def reset(self):
+        """Сброс буфера для нового сбора данных."""
         self.states = np.zeros((self.n_steps, self.obs_dim), dtype=np.float32)
         self.actions = np.zeros(self.n_steps, dtype=np.int64)
         self.rewards = np.zeros(self.n_steps, dtype=np.float32)
@@ -80,6 +102,17 @@ class RolloutBuffer:
         self.pos = 0
 
     def add(self, state, action, reward, value, log_prob, done):
+        """
+        Добавление одного шага опыта в буфер.
+        
+        Args:
+            state (np.ndarray): Состояние
+            action (int): Выбранное действие
+            reward (float): Полученная награда
+            value (float): Оценка ценности состояния
+            log_prob (float): Логарифмическая вероятность действия
+            done (bool): Флаг завершения эпизода
+        """
         self.states[self.pos] = state
         self.actions[self.pos] = action
         self.rewards[self.pos] = reward
@@ -89,12 +122,16 @@ class RolloutBuffer:
         self.pos += 1
 
     def is_full(self):
+        """Проверка, заполнен ли буфер."""
         return self.pos >= self.n_steps
 
     def compute_advantages(self, gamma, lam):
         """
-        gamma     : discount factor
-        lam       : lambda для GAE
+        Вычисление преимуществ (advantages) с использованием GAE.
+        
+        Args:
+            gamma (float): Коэффициент дисконтирования
+            lam (float): Параметр lambda для GAE
         """
         gae = 0
         for t in reversed(range(self.n_steps)):
@@ -109,6 +146,25 @@ class RolloutBuffer:
 
 
 class PPO:
+    """
+    Реализация алгоритма Proximal Policy Optimization.
+    
+    Args:
+        obs_dim (int): Размерность вектора наблюдения
+        act_dim (int): Размерность пространства действий
+        hidden_size (int): Размер скрытых слоев
+        lr (float): Скорость обучения
+        gamma (float): Коэффициент дисконтирования
+        lam (float): Параметр lambda для GAE
+        clip_eps (float): Параметр клиппинга для PPO
+        ent_coef (float): Коэффициент энтропии
+        vf_coef (float): Коэффициент функции ценности
+        n_steps (int): Количество шагов для сбора перед обновлением
+        batch_size (int): Размер батча для обновления
+        n_epochs (int): Количество эпох обновления
+        device (str): Устройство для вычислений (cpu/cuda)
+        deployments (List[str]): Список развертываний для обработки
+    """
     def __init__(
         self,
         obs_dim: int,
@@ -126,9 +182,6 @@ class PPO:
         device: str = "cpu",
         deployments: List[str] = None
     ):
-        """
-        Инициализация PPO агента.
-        """
         self.obs_dim = obs_dim
         self.act_dim = act_dim
         self.lr = lr
@@ -141,85 +194,95 @@ class PPO:
         self.batch_size = batch_size
         self.n_epochs = n_epochs
         self.device = device
-        self.deployments = deployments or []  # Initialize deployments list
+        self.deployments = deployments or []
 
-        # Модель
+        # Инициализация модели и оптимизатора
         self.model = ActorCritic(obs_dim, act_dim, hidden_size).to(device)
-
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
-
-        # Буфер
         self.buffer = RolloutBuffer(n_steps, obs_dim)
 
-    def _flatten_observation(self, obs):
-        """Преобразует наблюдение в плоский массив"""
+    def _flatten_observation(self, obs: Union[np.ndarray, Dict, Tuple]) -> np.ndarray:
+        """
+        Преобразование наблюдения в плоский массив.
+        Обрабатывает различные форматы входных данных:
+        - np.ndarray: возвращается как есть
+        - dict: преобразуется в массив метрик
+        - tuple: обрабатывается первый элемент
+        
+        Args:
+            obs: Входное наблюдение
+            
+        Returns:
+            np.ndarray: Плоский массив метрик
+        """
         if isinstance(obs, np.ndarray):
             return obs
         elif isinstance(obs, dict):
-            # Словарь с метриками оборудования и развертываний
             obs_array = []
-            # Получаем список узлов из наблюдения
-            nodes = list(obs.keys())
+            # Сортируем узлы для обеспечения стабильного порядка
+            nodes = sorted(obs.keys())
             for node in nodes:
-                # Добавляем метрики оборудования
+                # Метрики оборудования (7 метрик)
                 obs_array.extend([
-                    obs[node]["cpu"],
-                    obs[node]["ram"],
-                    obs[node]["tx_bandwidth"],
-                    obs[node]["rx_bandwidth"],
-                    obs[node]["read_disks_bandwidth"],
-                    obs[node]["write_disks_bandwidth"],
-                    obs[node]["avg_latency"]
+                    float(obs[node]["cpu"]),
+                    float(obs[node]["ram"]),
+                    float(obs[node]["tx_bandwidth"]),
+                    float(obs[node]["rx_bandwidth"]),
+                    float(obs[node]["read_disks_bandwidth"]),
+                    float(obs[node]["write_disks_bandwidth"]),
+                    float(obs[node]["avg_latency"])
                 ])
-                # Добавляем метрики развертываний
+                # Метрики развертываний
                 if "deployments" in obs[node]:
                     for deployment in self.deployments:
                         if deployment in obs[node]["deployments"]:
-                            obs_array.append(obs[node]["deployments"][deployment]["replicas"])
+                            obs_array.append(float(obs[node]["deployments"][deployment]["replicas"]))
                         else:
-                            obs_array.append(0.0)  # Если развертывание отсутствует, используем 0
+                            obs_array.append(0.0)
                 else:
-                    # Если нет информации о развертываниях, добавляем нули
                     for _ in self.deployments:
                         obs_array.append(0.0)
             return np.array(obs_array, dtype=np.float32)
         elif isinstance(obs, tuple):
-            # Если наблюдение - кортеж, берем первый элемент (обычно это словарь)
             return self._flatten_observation(obs[0])
         else:
             raise ValueError(f"Unsupported observation type: {type(obs)}")
 
-    def select_action(self, state):
+    def select_action(self, state: Union[np.ndarray, Dict, Tuple]) -> Tuple[int, float, float]:
         """
-        Выбираем действие (action) из политики в режиме training.
-        state: np.array(obs_dim) — наблюдение.
-        Возвращаем: action, log_prob, value
+        Выбор действия на основе текущего состояния.
+        
+        Args:
+            state: Текущее состояние
+            
+        Returns:
+            Tuple[int, float, float]: (выбранное действие, log_prob, оценка ценности)
         """
         try:
-            # Convert state to tensor
+            # Преобразование состояния в тензор
             state = self._flatten_observation(state)
-            state_t = torch.tensor(state, dtype=torch.float32).to(self.device)
+            state = torch.FloatTensor(state).unsqueeze(0).to(self.device)
             
-            # Validate observation dimensions
-            if len(state_t) != self.obs_dim:
-                raise ValueError(f"Observation dimension mismatch. Expected {self.obs_dim}, got {len(state_t)}")
+            # Получение действия и оценки ценности
+            action, log_prob, _, value = self.model.get_action_and_value(state)
             
-            state_t = state_t.unsqueeze(0)
-
-            with torch.no_grad():
-                action, log_prob, dist, value = self.model.get_action_and_value(state_t)
-
-            return (action.item(), log_prob.cpu().item(), value.cpu().item())
+            return action.item(), log_prob.item(), value.item()
         except Exception as e:
             logger.error(f"Error in select_action: {str(e)}")
             raise
 
-    def collect_trajectories(self, env):
+    def collect_trajectories(self, env) -> Tuple[float, int]:
         """
-        Собираем траектории опыта.
+        Сбор траекторий опыта из среды.
+        
+        Args:
+            env: Среда для взаимодействия
+            
+        Returns:
+            Tuple[float, int]: (награда за эпизод, длина эпизода)
         """
         self.buffer.reset()
-        state = env.reset()
+        state, _ = env.reset()  # Получаем начальное состояние и info
         done = False
         episode_reward = 0
         episode_length = 0
@@ -236,7 +299,7 @@ class PPO:
                 episode_length += 1
 
                 if done:
-                    state = env.reset()
+                    state, _ = env.reset()  # Получаем новое начальное состояние и info
                     episode_reward = 0
                     episode_length = 0
 
@@ -246,94 +309,164 @@ class PPO:
             logger.error(f"Error in collect_trajectories: {str(e)}")
             raise
 
-    def update(self):
+    def update(self) -> Dict[str, float]:
         """
-        Обновляем политику на собранных данных.
-        """
-        indices = np.arange(self.n_steps)
-        np.random.shuffle(indices)
-
-        for _ in range(self.n_epochs):
-            for start in range(0, self.n_steps, self.batch_size):
-                end = start + self.batch_size
-                batch_indices = indices[start:end]
-
-                states = torch.tensor(self.buffer.states[batch_indices], dtype=torch.float32).to(self.device)
-                actions = torch.tensor(self.buffer.actions[batch_indices], dtype=torch.int64).to(self.device)
-                old_log_probs = torch.tensor(self.buffer.log_probs[batch_indices], dtype=torch.float32).to(self.device)
-                advantages = torch.tensor(self.buffer.advantages[batch_indices], dtype=torch.float32).to(self.device)
-                returns = torch.tensor(self.buffer.returns[batch_indices], dtype=torch.float32).to(self.device)
-
-                action_probs, values = self.model(states)
-                dist = torch.distributions.Categorical(action_probs)
-                new_log_probs = dist.log_prob(actions)
-
-                ratio = torch.exp(new_log_probs - old_log_probs)
-                surr1 = ratio * advantages
-                surr2 = torch.clamp(ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps) * advantages
-                policy_loss = -torch.min(surr1, surr2).mean()
-
-                value_loss = 0.5 * (returns - values.squeeze()).pow(2).mean()
-
-                entropy = dist.entropy().mean()
-
-                loss = policy_loss + self.vf_coef * value_loss - self.ent_coef * entropy
-
-                self.optimizer.zero_grad()
-                loss.backward()
-                self.optimizer.step()
-
-    def train(self, env, total_timesteps):
-        """
-        Обучаем агента.
+        Обновление политики на основе собранных траекторий.
+        
+        Returns:
+            Dict[str, float]: Метрики обучения (потери актера, критика, общие потери)
         """
         try:
-            episode_rewards = []
-            episode_lengths = []
-            timesteps = 0
+            # Преобразование данных в тензоры
+            states = torch.FloatTensor(self.buffer.states).to(self.device)
+            actions = torch.LongTensor(self.buffer.actions).to(self.device)
+            old_log_probs = torch.FloatTensor(self.buffer.log_probs).to(self.device)
+            advantages = torch.FloatTensor(self.buffer.advantages).to(self.device)
+            returns = torch.FloatTensor(self.buffer.returns).to(self.device)
 
-            while timesteps < total_timesteps:
-                episode_reward, episode_length = self.collect_trajectories(env)
-                self.update()
-                episode_rewards.append(episode_reward)
-                episode_lengths.append(episode_length)
-                timesteps += episode_length
+            # Нормализация преимуществ
+            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-                if len(episode_rewards) % 10 == 0:
-                    avg_reward = np.mean(episode_rewards[-10:])
-                    avg_length = np.mean(episode_lengths[-10:])
-                    logger.info(f"Episode {len(episode_rewards)}, Average Reward: {avg_reward:.2f}, Average Length: {avg_length:.2f}")
+            # Обновление политики
+            for _ in range(self.n_epochs):
+                # Перемешивание данных
+                indices = torch.randperm(len(states))
+                for start in range(0, len(states), self.batch_size):
+                    idx = indices[start:start + self.batch_size]
+                    
+                    # Получение новых значений
+                    action_probs, values = self.model(states[idx])
+                    dist = torch.distributions.Categorical(action_probs)
+                    new_log_probs = dist.log_prob(actions[idx])
+                    
+                    # Вычисление отношения вероятностей
+                    ratio = torch.exp(new_log_probs - old_log_probs[idx])
+                    
+                    # Вычисление потерь
+                    surr1 = ratio * advantages[idx]
+                    surr2 = torch.clamp(ratio, 1 - self.clip_eps, 1 + self.clip_eps) * advantages[idx]
+                    actor_loss = -torch.min(surr1, surr2).mean()
+                    
+                    # Потери критика
+                    critic_loss = 0.5 * (values.squeeze() - returns[idx]).pow(2).mean()
+                    
+                    # Энтропия для исследования
+                    entropy = dist.entropy().mean()
+                    
+                    # Общие потери
+                    loss = actor_loss + self.vf_coef * critic_loss - self.ent_coef * entropy
+                    
+                    # Оптимизация
+                    self.optimizer.zero_grad()
+                    loss.backward()
+                    self.optimizer.step()
 
             return {
-                "episode_rewards": episode_rewards,
-                "episode_lengths": episode_lengths
+                "actor_loss": actor_loss.item(),
+                "critic_loss": critic_loss.item(),
+                "total_loss": loss.item(),
+                "entropy": entropy.item()
             }
+        except Exception as e:
+            logger.error(f"Error in update: {str(e)}")
+            raise
+
+    def train(self, env, total_timesteps: int) -> Dict[str, List[float]]:
+        """
+        Основной цикл обучения.
+        
+        Args:
+            env: Среда для взаимодействия
+            total_timesteps (int): Общее количество шагов для обучения
+            
+        Returns:
+            Dict[str, List[float]]: Метрики обучения
+        """
+        try:
+            metrics = {
+                "episode_rewards": [],
+                "episode_lengths": [],
+                "actor_losses": [],
+                "critic_losses": [],
+                "total_losses": [],
+                "entropies": [],
+                "mean_rewards": [],
+                "mean_lengths": []
+            }
+            
+            num_episodes = total_timesteps // self.n_steps
+            for episode in range(num_episodes):
+                # Сбор траекторий
+                episode_reward, episode_length = self.collect_trajectories(env)
+                
+                # Обновление политики
+                update_metrics = self.update()
+                
+                # Сохранение метрик
+                metrics["episode_rewards"].append(episode_reward)
+                metrics["episode_lengths"].append(episode_length)
+                metrics["actor_losses"].append(update_metrics["actor_loss"])
+                metrics["critic_losses"].append(update_metrics["critic_loss"])
+                metrics["total_losses"].append(update_metrics["total_loss"])
+                metrics["entropies"].append(update_metrics["entropy"])
+                
+                # Вычисление средних значений
+                metrics["mean_rewards"].append(np.mean(metrics["episode_rewards"][-100:]))
+                metrics["mean_lengths"].append(np.mean(metrics["episode_lengths"][-100:]))
+                
+                # Логирование
+                logger.info(f"Episode {episode + 1}/{num_episodes}")
+                logger.info(f"Reward: {episode_reward:.2f}, Length: {episode_length}")
+                logger.info(f"Mean Reward (last 100): {metrics['mean_rewards'][-1]:.2f}")
+                logger.info(f"Mean Length (last 100): {metrics['mean_lengths'][-1]:.2f}")
+                logger.info(f"Actor Loss: {update_metrics['actor_loss']:.4f}")
+                logger.info(f"Critic Loss: {update_metrics['critic_loss']:.4f}")
+                logger.info(f"Total Loss: {update_metrics['total_loss']:.4f}")
+                logger.info(f"Entropy: {update_metrics['entropy']:.4f}")
+                
+            return metrics
         except Exception as e:
             logger.error(f"Error in train: {str(e)}")
             raise
 
-    def save(self, path):
+    def save_model(self, path: str):
         """
-        Сохраняем модель.
+        Сохранение модели.
+        
+        Args:
+            path (str): Путь для сохранения
         """
-        torch.save({
-            'model_state_dict': self.model.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
-            'obs_dim': self.obs_dim,
-            'act_dim': self.act_dim,
-            'deployments': self.deployments
-        }, path)
+        try:
+            torch.save({
+                'model_state_dict': self.model.state_dict(),
+                'optimizer_state_dict': self.optimizer.state_dict(),
+                'obs_dim': self.obs_dim,
+                'act_dim': self.act_dim,
+                'deployments': self.deployments
+            }, path)
+            logger.info(f"Model saved to {path}")
+        except Exception as e:
+            logger.error(f"Error saving model: {str(e)}")
+            raise
 
-    def load(self, path):
+    def load_model(self, path: str):
         """
-        Загружаем модель.
+        Загрузка модели.
+        
+        Args:
+            path (str): Путь к сохраненной модели
         """
-        checkpoint = torch.load(path)
-        self.model.load_state_dict(checkpoint['model_state_dict'])
-        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        self.obs_dim = checkpoint['obs_dim']
-        self.act_dim = checkpoint['act_dim']
-        self.deployments = checkpoint['deployments']
+        try:
+            checkpoint = torch.load(path)
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            self.obs_dim = checkpoint['obs_dim']
+            self.act_dim = checkpoint['act_dim']
+            self.deployments = checkpoint['deployments']
+            logger.info(f"Model loaded from {path}")
+        except Exception as e:
+            logger.error(f"Error loading model: {str(e)}")
+            raise
 
 
 def main():

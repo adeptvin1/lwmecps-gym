@@ -16,6 +16,7 @@ from gymnasium.envs.registration import register
 from lwmecps_gym.envs import LWMECPSEnv
 import numpy as np
 from gymnasium import spaces
+import torch
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -291,160 +292,118 @@ class TrainingService:
     
     async def _run_training(self, task_id: str, task: TrainingTask):
         """
-        Internal method to run the actual training process.
+        Запуск процесса обучения.
         
         Args:
-            task_id: Unique identifier of the training task
-            task: TrainingTask instance containing training parameters
+            task_id (str): ID задачи обучения
+            task (TrainingTask): Объект задачи обучения
         """
         try:
-            logger.info(f"Starting training process for task {task_id}")
-            
-            # Register custom Gym environment
-            logger.info("Registering environment...")
-            gym.envs.register(
-                id="lwmecps-v0",
-                entry_point="lwmecps_gym.envs:LWMECPSEnv",
-            )
-            
-            # Get Kubernetes cluster state
-            logger.info("Getting Kubernetes state...")
-            nodes = self.k8s_client.list_node()
-            node_names = [node.metadata.name for node in nodes.items]
-            logger.info(f"Found nodes: {node_names}")
-            
-            # Define environment parameters
-            max_hardware = {
-                "cpu": 8,
-                "ram": 16000,
-                "tx_bandwidth": 1000,
-                "rx_bandwidth": 1000,
-                "read_disks_bandwidth": 500,
-                "write_disks_bandwidth": 500,
-                "avg_latency": 300,
-            }
-            
-            pod_usage = {
-                "cpu": 2,
-                "ram": 2000,
-                "tx_bandwidth": 20,
-                "rx_bandwidth": 20,
-                "read_disks_bandwidth": 100,
-                "write_disks_bandwidth": 100,
-            }
-            
-            # Create Gym environment
-            logger.info("Creating Gym environment...")
+            # Создание среды
             env = gym.make(
                 "lwmecps-v0",
-                num_nodes=len(node_names),
-                node_name=node_names,
-                max_hardware=max_hardware,
-                pod_usage=pod_usage,
-                node_info={},  # We'll need to implement a way to get node info
-                deployment_name="mec-test-app",
-                namespace="default",
-                deployments=["mec-test-app"],
-                max_pods=10000,
+                num_nodes=task.env_config.get("num_nodes", 3),
+                node_name=task.env_config.get("node_name", ["node1", "node2", "node3"]),
+                max_hardware=task.env_config.get("max_hardware", {
+                    "cpu": 8,
+                    "ram": 16000,
+                    "tx_bandwidth": 1000,
+                    "rx_bandwidth": 1000,
+                    "read_disks_bandwidth": 500,
+                    "write_disks_bandwidth": 500,
+                    "avg_latency": 300
+                }),
+                pod_usage=task.env_config.get("pod_usage", {
+                    "cpu": 2,
+                    "ram": 2000,
+                    "tx_bandwidth": 20,
+                    "rx_bandwidth": 20,
+                    "read_disks_bandwidth": 100,
+                    "write_disks_bandwidth": 100
+                }),
+                node_info=task.env_config.get("node_info", {}),
+                deployment_name=task.env_config.get("deployment_name", "mec-test-app"),
+                namespace=task.env_config.get("namespace", "default"),
+                deployments=task.env_config.get("deployments", ["mec-test-app"]),
+                max_pods=task.env_config.get("max_pods", 10000)
             )
-            logger.info("Environment created successfully")
-            
-            # Create and train agent based on model type
-            logger.info(f"Creating {task.model_type} agent with parameters: {task.parameters}")
-            
-            if task.model_type == ModelType.Q_LEARNING:
-                agent = QLearningAgent(env, **task.parameters)
-                results = agent.train(episodes=task.total_episodes)
-                model_path = f"./models/q_table_{task_id}.pkl"
-                agent.save_q_table(model_path)
-            elif task.model_type == ModelType.DQN:
-                agent = DQNAgent(env, **task.parameters)
-                results = agent.train(episodes=task.total_episodes)
-                model_path = f"./models/dqn_{task_id}.pth"
-                agent.save(model_path)
-            elif task.model_type == ModelType.PPO:
-                # Get observation and action space dimensions
-                obs_dim = 0
-                if isinstance(env.observation_space, spaces.Box):
-                    obs_dim = np.prod(env.observation_space.shape)
-                elif isinstance(env.observation_space, spaces.Dict):
-                    # Get the base environment
-                    base_env = env.unwrapped
-                    # Add hardware metrics (7 per node)
-                    obs_dim += 7 * len(base_env.node_name)
-                    # Add deployment metrics (1 per deployment per node)
-                    obs_dim += len(base_env.deployments) * len(base_env.node_name)
-                else:
-                    raise ValueError(f"Unsupported observation space type: {type(env.observation_space)}")
-                
-                act_dim = env.action_space.n
-                # Map task parameters to PPO constructor parameters
-                ppo_params = {
-                    'lr': task.parameters.get('learning_rate', 3e-4),
-                    'gamma': task.parameters.get('gamma', 0.99),
-                    'lam': task.parameters.get('gae_lambda', 0.95),
-                    'clip_eps': task.parameters.get('clip_epsilon', 0.2),
-                    'ent_coef': task.parameters.get('entropy_coef', 0.01),
-                    'vf_coef': task.parameters.get('value_coef', 0.5),
-                    'hidden_size': 64,
-                    'n_steps': 2048,
-                    'batch_size': 64,
-                    'n_epochs': 10,
-                    'device': 'cpu',
-                    'deployments': env.unwrapped.deployments  # Get deployments from base environment
-                }
+
+            # Получение размерностей пространств
+            obs_dim = 0
+            if isinstance(env.observation_space, spaces.Box):
+                obs_dim = env.observation_space.shape[0]
+            elif isinstance(env.observation_space, spaces.Dict):
+                # Для LWMECPSEnv: 7 метрик на узел + 1 метрика развертывания на узел
+                num_nodes = task.env_config.get("num_nodes", 3)
+                num_deployments = len(task.env_config.get("deployments", ["mec-test-app"]))
+                obs_dim = num_nodes * (7 + num_deployments)  # 7 метрик оборудования + метрики развертываний
+            else:
+                raise ValueError(f"Unsupported observation space type: {type(env.observation_space)}")
+
+            act_dim = env.action_space.n
+
+            # Создание агента в зависимости от типа модели
+            if task.model_type == ModelType.PPO:
                 agent = PPO(
                     obs_dim=obs_dim,
                     act_dim=act_dim,
-                    **ppo_params
+                    hidden_size=task.model_config.get("hidden_size", 64),
+                    lr=task.model_config.get("lr", 3e-4),
+                    gamma=task.model_config.get("gamma", 0.99),
+                    lam=task.model_config.get("lam", 0.95),
+                    clip_eps=task.model_config.get("clip_eps", 0.2),
+                    ent_coef=task.model_config.get("ent_coef", 0.01),
+                    vf_coef=task.model_config.get("vf_coef", 0.5),
+                    n_steps=task.model_config.get("n_steps", 2048),
+                    batch_size=task.model_config.get("batch_size", 64),
+                    n_epochs=task.model_config.get("n_epochs", 10),
+                    device="cuda" if torch.cuda.is_available() else "cpu",
+                    deployments=task.env_config.get("deployments", ["mec-test-app"])
                 )
-                # PPO uses timesteps instead of episodes
-                total_timesteps = task.total_episodes * 1000  # Approximate conversion
-                results = agent.train(env, total_timesteps=total_timesteps)
-                model_path = f"./models/ppo_{task_id}.pth"
-                agent.save(model_path)
+            elif task.model_type == ModelType.DQN:
+                agent = DQNAgent(env)
+            elif task.model_type == ModelType.Q_LEARNING:
+                agent = QLearningAgent(env)
             else:
                 raise ValueError(f"Unsupported model type: {task.model_type}")
-            
-            logger.info(f"Training completed with results: {results}")
-            
-            # Save model to wandb
-            if task.wandb_run_id:
-                logger.info("Saving model to wandb")
-                artifact = wandb.Artifact(f'{task.model_type}_{task_id}', type='model')
-                artifact.add_file(model_path)
-                wandb.log_artifact(artifact)
-            
-            # Save training results
-            logger.info("Saving training result to database")
-            training_result = TrainingResult(
-                task_id=task_id,
-                episode=task.total_episodes,
-                metrics=results.get("result_metrics", {}),
-                wandb_run_id=task.wandb_run_id,
-                model_weights_path=model_path
-            )
-            await self.db.save_training_result(training_result)
-            
-            # Update task status
-            logger.info("Updating task status to completed")
-            await self.db.update_training_task(task_id, {
-                "current_episode": task.total_episodes,
-                "progress": 1.0,
-                "metrics": results.get("task_metrics", {}),
-                "state": TrainingState.COMPLETED
-            })
-            
-            logger.info(f"Training completed for task {task_id}")
-            
-        except Exception as e:
-            logger.error(f"Error in training task {task_id}: {str(e)}", exc_info=True)
-            await self.db.update_training_task(task_id, {
-                "state": TrainingState.FAILED,
-                "error_message": str(e)
-            })
-        finally:
-            # Cleanup
-            self.active_tasks[task_id] = False
+
+            # Загрузка модели, если указан путь
+            if task.model_path:
+                if task.model_type == ModelType.PPO:
+                    agent.load_model(task.model_path)
+                elif task.model_type == ModelType.DQN:
+                    agent.model.load_model(task.model_path)
+                elif task.model_type == ModelType.Q_LEARNING:
+                    agent.load_q_table(task.model_path)
+
+            # Вычисление общего количества шагов
+            total_timesteps = task.total_episodes * task.model_config.get("n_steps", 2048)
+
+            # Запуск обучения
+            results = agent.train(env, total_timesteps=total_timesteps)
+
+            # Сохранение результатов
+            task.state = TrainingState.COMPLETED
+            task.metrics = results
+            task.progress = 100.0
+            task.current_episode = task.total_episodes
+            await self.db.update_training_task(task_id, task.model_dump())
+
+            # Сохранение модели
+            if task.model_type == ModelType.PPO:
+                agent.save_model(f"models/ppo_model_{task_id}.pth")
+            elif task.model_type == ModelType.DQN:
+                agent.model.save_model(f"models/dqn_model_{task_id}.pth")
+            elif task.model_type == ModelType.Q_LEARNING:
+                agent.save_q_table(f"models/q_table_{task_id}.pkl")
+
+            # Завершение wandb
             finish_wandb()
-            logger.info(f"Training process finished for task {task_id}") 
+
+        except Exception as e:
+            logger.error(f"Error in training task {task_id}: {str(e)}")
+            task.state = TrainingState.FAILED
+            task.error_message = str(e)
+            await self.db.update_training_task(task_id, task.model_dump())
+            finish_wandb()
+            raise 
