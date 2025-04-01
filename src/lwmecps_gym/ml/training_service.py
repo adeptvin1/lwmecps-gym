@@ -187,10 +187,22 @@ class TrainingService:
         if not task:
             raise ValueError(f"Task {task_id} not found")
         
+        # Convert metrics to lists if they're not already
+        metrics_list = {}
+        for key, value in metrics.items():
+            if key not in task.metrics:
+                task.metrics[key] = []
+            task.metrics[key].append(value)
+            metrics_list[key] = task.metrics[key]
+        
+        # Update task metrics
+        task.metrics = metrics_list
+        await self.db.update_training_task(task_id, task.model_dump())
+        
         result = TrainingResult(
             task_id=task_id,
             episode=episode,
-            metrics=metrics,
+            metrics=metrics_list,
             wandb_run_id=task.wandb_run_id
         )
         
