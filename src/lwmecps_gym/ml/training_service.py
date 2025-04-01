@@ -368,12 +368,14 @@ class TrainingService:
                 if isinstance(env.observation_space, spaces.Box):
                     obs_dim = np.prod(env.observation_space.shape)
                 elif isinstance(env.observation_space, spaces.Dict):
+                    # Get the base environment
+                    base_env = env.unwrapped
                     for node, node_space in env.observation_space.spaces.items():
                         if isinstance(node_space, spaces.Dict):
                             # Add hardware metrics (7 per node)
-                            obs_dim += 7 * len(env.node_name)
+                            obs_dim += 7 * len(base_env.node_name)
                             # Add deployment metrics (1 per deployment per node)
-                            obs_dim += len(env.deployments) * len(env.node_name)
+                            obs_dim += len(base_env.deployments) * len(base_env.node_name)
                 else:
                     raise ValueError(f"Unsupported observation space type: {type(env.observation_space)}")
                 
@@ -391,7 +393,7 @@ class TrainingService:
                     'batch_size': 64,
                     'n_epochs': 10,
                     'device': 'cpu',
-                    'deployments': env.deployments  # Add deployments list
+                    'deployments': env.unwrapped.deployments  # Get deployments from base environment
                 }
                 agent = PPO(
                     obs_dim=obs_dim,
