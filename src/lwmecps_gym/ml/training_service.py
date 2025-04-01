@@ -14,6 +14,8 @@ from .models.dq_learning import DQNAgent
 from .models.ppo_learning import PPO
 from gymnasium.envs.registration import register
 from lwmecps_gym.envs import LWMECPSEnv
+import numpy as np
+from gymnasium import spaces
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -363,8 +365,16 @@ class TrainingService:
             elif task.model_type == ModelType.PPO:
                 # Get observation and action space dimensions
                 # For Dict observation space, we need to calculate total dimensions
-                obs_dim = sum(space.shape[0] if hasattr(space, 'shape') else 1 
-                            for space in env.observation_space.spaces.values())
+                obs_dim = 0
+                for space in env.observation_space.spaces.values():
+                    if space is not None:
+                        if hasattr(space, 'shape'):
+                            obs_dim += space.shape[0]
+                        elif isinstance(space, spaces.Box):
+                            obs_dim += np.prod(space.shape)
+                        else:
+                            obs_dim += 1
+                
                 act_dim = env.action_space.n
                 agent = PPO(
                     obs_dim=obs_dim,
