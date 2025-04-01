@@ -4,7 +4,7 @@ import gymnasium as gym
 import bitmath
 import re
 from time import time
-from lwmecps_gym.ml.models.ppo_learning import PPO
+from lwmecps_gym.ml.models.q_learn import QLearningAgent
 import logging
 
 # Configure logging
@@ -106,42 +106,15 @@ def main():
                       namespace='default',
                       deployments=['mec-test-app'],
                       max_pods=max_pods)
-        start = time()
-        obs_dim = env.observation_space.shape[0]
-        act_dim = env.action_space.n
 
         # Create and train agent
-        ppo_agent = PPO(
-                obs_dim=obs_dim,
-                act_dim=act_dim,
-                hidden_size=64,
-                lr=3e-4,
-                gamma=0.99,
-                lam=0.95,
-                clip_eps=0.2,
-                ent_coef=0.0,
-                vf_coef=0.5,
-                n_steps=2048,
-                batch_size=64,
-                n_epochs=10,
-                device="cpu",
-            )
-        ppo_agent.train(env, total_timesteps=10_000, log_interval=2048)
-
-
+        agent = QLearningAgent(env)
+        start = time()
+        agent.train(episodes=100)
         print(f"Training time: {(time() - start)}")
-        ppo_agent.save_q_table("./ppo_table.pkl")
-        state = env.reset()
-        done = False
-        cum_reward = 0.0
-        while not done:
-            action, _, _ = ppo_agent.select_action(state)
-            next_state, reward, done, info = env.step(action)
-            cum_reward += reward
-            state = next_state
+        agent.save_q_table("./q_table.pkl")
 
-        env.render()
-        print("Cumulative reward after test episode:", cum_reward)
+        env.close()
 
     except Exception as e:
         logger.error(f"Error in main execution: {str(e)}")

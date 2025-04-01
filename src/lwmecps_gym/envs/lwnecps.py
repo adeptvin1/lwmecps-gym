@@ -407,12 +407,15 @@ class LWMECPSEnv(gym.Env):
                 
                 if pods > 0:
                     total_pods += pods
+                    # TODO: Надо сделать запрос средней Latency с тестового окружения (lwmecps-testapp)
+                    # TODO: Надо посмотреть на reward
                     total_latency += self.state[node]["avg_latency"] * pods
                     logger.debug(f"[LWMECPSEnv.reward] Node {node}: {pods} pods, latency contribution: {self.state[node]['avg_latency'] * pods}")
             except Exception as e:
                 logger.warning(f"[LWMECPSEnv.reward] Error processing node {node}: {str(e)}")
                 continue
-        
+
+        # TODO: Надо посмотреть на reward
         if total_pods > 0:
             total_latency /= total_pods
             self.current_latency = total_latency

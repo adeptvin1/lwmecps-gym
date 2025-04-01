@@ -9,3 +9,4 @@ pydantic>=2.4.2
 prometheus-client
 pydantic_settings
 wandb
+torch>=2.0.0

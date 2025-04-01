@@ -3,27 +3,17 @@ import wandb
 from datetime import datetime
 import logging
 from ..core.database import Database
-from ..core.models import TrainingTask, TrainingResult, ReconciliationResult, TrainingState, ModelType
+from ..core.models import TrainingTask, TrainingResult, ReconciliationResult, TrainingState
 from ..core.wandb_config import init_wandb, log_metrics, log_model, finish_wandb
 from ..core.wandb_config import WandbConfig
 import gymnasium as gym
 from kubernetes import client, config
 from kubernetes.client import CoreV1Api
 from lwmecps_gym.ml.models.q_learn import QLearningAgent
-from .models.dq_learning import DQNAgent
-from .models.ppo_learning import PPO
-from gymnasium.envs.registration import register
-from lwmecps_gym.envs import LWMECPSEnv
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Register the environment
-register(
-    id="lwmecps-v0",
-    entry_point="lwmecps_gym.envs:LWMECPSEnv",
-)
 
 class TrainingService:
     """
@@ -214,7 +204,7 @@ class TrainingService:
         if not task:
             raise ValueError(f"Task {task_id} not found")
         
-        # Initialize Weights & Biases for reconciliation
+        # Initialize Weights & Bibes for reconciliation
         init_wandb(self.wandb_config)
         
         # Download model weights from Weights & Biases based on model type
@@ -229,7 +219,7 @@ class TrainingService:
                 raise ValueError("Q-table artifact not found in wandb run")
             model_weights = q_table_artifact.download()
         else:
-            # For DQN and PPO models
+            # For DQN and other PyTorch models
             model_weights = run.file("model_weights.pth").download()
         
         # Run reconciliation logic (placeholder implementation)
@@ -335,42 +325,24 @@ class TrainingService:
             )
             logger.info("Environment created successfully")
             
-            # Create and train agent based on model type
-            logger.info(f"Creating {task.model_type} agent with parameters: {task.parameters}")
+            # Create and train Q-Learning agent
+            logger.info(f"Creating Q-Learning agent with parameters: {task.parameters}")
+            agent = QLearningAgent(env, **task.parameters)
             
-            if task.model_type == ModelType.Q_LEARNING:
-                agent = QLearningAgent(env, **task.parameters)
-                results = agent.train(episodes=task.total_episodes)
-                model_path = f"./models/q_table_{task_id}.pkl"
-                agent.save_q_table(model_path)
-            elif task.model_type == ModelType.DQN:
-                agent = DQNAgent(env, **task.parameters)
-                results = agent.train(episodes=task.total_episodes)
-                model_path = f"./models/dqn_{task_id}.pth"
-                agent.save(model_path)
-            elif task.model_type == ModelType.PPO:
-                # Get observation and action space dimensions
-                obs_dim = env.observation_space.shape[0]
-                act_dim = env.action_space.n
-                agent = PPO(
-                    obs_dim=obs_dim,
-                    act_dim=act_dim,
-                    **task.parameters
-                )
-                # PPO uses timesteps instead of episodes
-                total_timesteps = task.total_episodes * 1000  # Approximate conversion
-                results = agent.train(env, total_timesteps=total_timesteps)
-                model_path = f"./models/ppo_{task_id}.pth"
-                agent.save(model_path)
-            else:
-                raise ValueError(f"Unsupported model type: {task.model_type}")
-            
+            # Run training episodes
+            logger.info(f"Starting training for {task.total_episodes} episodes...")
+            results = agent.train(episodes=task.total_episodes)
             logger.info(f"Training completed with results: {results}")
             
-            # Save model to wandb
+            # Save trained model
+            model_path = f"./models/q_table_{task_id}.pkl"
+            logger.info(f"Saving model to {model_path}")
+            agent.save_q_table(model_path)
+            
+            # Explicitly save model to wandb
             if task.wandb_run_id:
                 logger.info("Saving model to wandb")
-                artifact = wandb.Artifact(f'{task.model_type}_{task_id}', type='model')
+                artifact = wandb.Artifact(f'q_table_{task_id}', type='model')
                 artifact.add_file(model_path)
                 wandb.log_artifact(artifact)
             
@@ -379,7 +351,7 @@ class TrainingService:
             training_result = TrainingResult(
                 task_id=task_id,
                 episode=task.total_episodes,
-                metrics=results.get("result_metrics", {}),
+                metrics=results["result_metrics"],
                 wandb_run_id=task.wandb_run_id,
                 model_weights_path=model_path
             )
@@ -390,7 +362,7 @@ class TrainingService:
             await self.db.update_training_task(task_id, {
                 "current_episode": task.total_episodes,
                 "progress": 1.0,
-                "metrics": results.get("task_metrics", {}),
+                "metrics": results["task_metrics"],
                 "state": TrainingState.COMPLETED
             })
             

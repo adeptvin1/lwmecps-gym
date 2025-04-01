@@ -14,17 +14,18 @@ def validate_object_id(v: Any) -> str:
 
 PyObjectId = Annotated[str, BeforeValidator(validate_object_id)]
 
+class ModelType(str, Enum):
+    DQN = "dqn"
+    Q_LEARNING = "q_learning"
+    PPO = "ppo"
+    # Add more model types as needed
+
 class TrainingState(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
     PAUSED = "paused"
-
-class ModelType(str, Enum):
-    DQN = "dqn"
-    Q_LEARNING = "q_learning"
-    # Add more model types as needed
 
 class TrainingTask(BaseModel):
     """MongoDB model for training tasks"""
