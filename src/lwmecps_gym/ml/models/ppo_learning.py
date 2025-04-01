@@ -158,7 +158,9 @@ class PPO:
         elif isinstance(obs, dict):
             # Словарь с метриками оборудования и развертываний
             obs_array = []
-            for node in self.deployments:
+            # Получаем список узлов из наблюдения
+            nodes = list(obs.keys())
+            for node in nodes:
                 # Добавляем метрики оборудования
                 obs_array.extend([
                     obs[node]["cpu"],
@@ -171,7 +173,10 @@ class PPO:
                 ])
                 # Добавляем метрики развертываний
                 for deployment in self.deployments:
-                    obs_array.append(obs[node]["deployments"][deployment]["replicas"])
+                    if deployment in obs[node]["deployments"]:
+                        obs_array.append(obs[node]["deployments"][deployment]["replicas"])
+                    else:
+                        obs_array.append(0.0)  # Если развертывание отсутствует, используем 0
             return np.array(obs_array, dtype=np.float32)
         elif isinstance(obs, tuple):
             # Если наблюдение - кортеж, берем первый элемент (обычно это словарь)
