@@ -47,14 +47,6 @@ class LWMECPSEnv(gym.Env):
         # self.render_mode = render_mode
         # self.window_size = window_size
 
-        # Define observation space
-        # Observation space includes: CPU usage, Memory usage, Pod count, Latency
-        self.observation_space = spaces.Box(
-            low=np.array([0, 0, 0, 0]),  # Minimum values
-            high=np.array([100, 100, self.max_pods, float('inf')]),  # Maximum values
-            dtype=np.float32
-        )
-
         # Define action space
         # Action space: scale up/down pods (discrete actions)
         self.action_space = spaces.Discrete(3)  # 0: scale down, 1: no change, 2: scale up
@@ -122,7 +114,6 @@ class LWMECPSEnv(gym.Env):
                             }
                         ),
                     }
-                    # Тут реализован цикл проходящий по именам нод и создающий словарь описания нод
                 )
                 for node in self.node_name
             }
