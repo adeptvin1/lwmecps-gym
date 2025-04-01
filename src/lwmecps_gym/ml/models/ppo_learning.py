@@ -7,6 +7,7 @@ from torch.distributions.categorical import Categorical
 import numpy as np
 from gymnasium import spaces
 import logging
+from typing import List
 
 # TODO: Добавить ENV LWMECPSEnv2
 
@@ -157,49 +158,37 @@ class RolloutBuffer:
 class PPO:
     def __init__(
         self,
-        obs_dim,
-        act_dim,
-        hidden_size=64,
-        lr=3e-4,
-        gamma=0.99,
-        lam=0.95,
-        clip_eps=0.2,
-        ent_coef=0.0,
-        vf_coef=0.5,
-        n_steps=2048,
-        batch_size=64,
-        n_epochs=10,
-        device="cpu",
+        obs_dim: int,
+        act_dim: int,
+        hidden_size: int = 64,
+        lr: float = 3e-4,
+        gamma: float = 0.99,
+        lam: float = 0.95,
+        clip_eps: float = 0.2,
+        ent_coef: float = 0.0,
+        vf_coef: float = 0.5,
+        n_steps: int = 2048,
+        batch_size: int = 64,
+        n_epochs: int = 10,
+        device: str = "cpu",
+        deployments: List[str] = None
     ):
         """
-        obs_dim   : размерность наблюдения
-        act_dim   : размерность (количество дискретных действий)
-        hidden_size: размер скрытых слоёв в сети
-        lr        : learning rate
-        gamma     : discount factor
-        lam       : GAE-lambda
-        clip_eps  : epsilon в PPO objective (clip range)
-        ent_coef  : коэффициент при энтропии (необязательно)
-        vf_coef   : коэффициент при value loss
-        n_steps   : сколько шагов опыта собираем на каждом цикле обучения
-        batch_size: размер мини-батча при оптимизации
-        n_epochs  : число эпох обновления на каждом цикле
-        device    : 'cpu' или 'cuda'
+        Инициализация PPO агента.
         """
         self.obs_dim = obs_dim
         self.act_dim = act_dim
-
+        self.lr = lr
         self.gamma = gamma
         self.lam = lam
         self.clip_eps = clip_eps
         self.ent_coef = ent_coef
         self.vf_coef = vf_coef
-
         self.n_steps = n_steps
         self.batch_size = batch_size
         self.n_epochs = n_epochs
-
         self.device = device
+        self.deployments = deployments or []  # Initialize deployments list
 
         # Модель
         self.model = ActorCritic(obs_dim, act_dim, hidden_size).to(device)
@@ -209,37 +198,42 @@ class PPO:
         # Буфер
         self.buffer = RolloutBuffer(n_steps, obs_dim)
 
-    def _flatten_observation(self, obs_dict):
+    def _flatten_observation(self, obs):
         """
-        Flatten the dictionary observation into a single vector.
+        Handle observation which can be either numpy array or dict
         """
         try:
-            flattened = []
-            for node, node_data in obs_dict.items():
-                # Add hardware metrics
-                for metric in ['cpu', 'ram', 'tx_bandwidth', 'rx_bandwidth', 
-                             'read_disks_bandwidth', 'write_disks_bandwidth', 'avg_latency']:
-                    if metric not in node_data:
-                        logger.warning(f"Missing metric {metric} for node {node}, using 0")
-                        flattened.append(0.0)
-                    else:
-                        flattened.append(float(node_data[metric]))
-                
-                # Add deployment metrics
-                if 'deployments' not in node_data:
-                    logger.warning(f"Missing deployments for node {node}, using 0")
-                    for _ in self.deployments:
-                        flattened.append(0.0)
-                else:
-                    for deployment in self.deployments:
-                        if deployment not in node_data['deployments']:
-                            logger.warning(f"Missing deployment {deployment} for node {node}, using 0")
+            if isinstance(obs, np.ndarray):
+                return obs
+            elif isinstance(obs, dict):
+                flattened = []
+                for node, node_data in obs.items():
+                    # Add hardware metrics
+                    for metric in ['cpu', 'ram', 'tx_bandwidth', 'rx_bandwidth', 
+                                 'read_disks_bandwidth', 'write_disks_bandwidth', 'avg_latency']:
+                        if metric not in node_data:
+                            logger.warning(f"Missing metric {metric} for node {node}, using 0")
                             flattened.append(0.0)
                         else:
-                            replicas = node_data['deployments'][deployment].get('replicas', 0)
-                            flattened.append(float(replicas))
-            
-            return np.array(flattened, dtype=np.float32)
+                            flattened.append(float(node_data[metric]))
+                    
+                    # Add deployment metrics
+                    if 'deployments' not in node_data:
+                        logger.warning(f"Missing deployments for node {node}, using 0")
+                        for _ in self.deployments:
+                            flattened.append(0.0)
+                    else:
+                        for deployment in self.deployments:
+                            if deployment not in node_data['deployments']:
+                                logger.warning(f"Missing deployment {deployment} for node {node}, using 0")
+                                flattened.append(0.0)
+                            else:
+                                replicas = node_data['deployments'][deployment].get('replicas', 0)
+                                flattened.append(float(replicas))
+                
+                return np.array(flattened, dtype=np.float32)
+            else:
+                raise ValueError(f"Unsupported observation type: {type(obs)}")
         except Exception as e:
             logger.error(f"Error flattening observation: {str(e)}")
             raise
@@ -247,19 +241,13 @@ class PPO:
     def select_action(self, state):
         """
         Выбираем действие (action) из политики в режиме training.
-        state: dict или np.array(obs_dim) — наблюдение.
+        state: np.array(obs_dim) — наблюдение.
         Возвращаем: action, log_prob, value
         """
         try:
-            # If state is already a numpy array, use it directly
-            if isinstance(state, np.ndarray):
-                state_t = torch.tensor(state, dtype=torch.float32).to(self.device)
-            # If state is a dict, flatten it
-            elif isinstance(state, dict):
-                state = self._flatten_observation(state)
-                state_t = torch.tensor(state, dtype=torch.float32).to(self.device)
-            else:
-                raise ValueError(f"Unsupported state type: {type(state)}")
+            # Convert state to tensor
+            state = self._flatten_observation(state)
+            state_t = torch.tensor(state, dtype=torch.float32).to(self.device)
             
             # Validate observation dimensions
             if len(state_t) != self.obs_dim:
