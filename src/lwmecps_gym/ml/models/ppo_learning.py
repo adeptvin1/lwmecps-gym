@@ -201,52 +201,41 @@ class PPO:
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
         self.buffer = RolloutBuffer(n_steps, obs_dim)
 
-    def _flatten_observation(self, obs: Union[np.ndarray, Dict, Tuple]) -> np.ndarray:
+    def _flatten_observation(self, obs):
         """
-        Преобразование наблюдения в плоский массив.
-        Обрабатывает различные форматы входных данных:
-        - np.ndarray: возвращается как есть
-        - dict: преобразуется в массив метрик
-        - tuple: обрабатывается первый элемент
+        Преобразует наблюдение в одномерный вектор.
         
         Args:
-            obs: Входное наблюдение
+            obs: Наблюдение из среды
             
         Returns:
-            np.ndarray: Плоский массив метрик
+            np.ndarray: Одномерный вектор наблюдения
         """
         if isinstance(obs, np.ndarray):
             return obs
-        elif isinstance(obs, dict):
-            obs_array = []
-            # Сортируем узлы для обеспечения стабильного порядка
-            nodes = sorted(obs.keys())
-            for node in nodes:
-                # Метрики оборудования (7 метрик)
-                obs_array.extend([
-                    float(obs[node]["cpu"]),
-                    float(obs[node]["ram"]),
-                    float(obs[node]["tx_bandwidth"]),
-                    float(obs[node]["rx_bandwidth"]),
-                    float(obs[node]["read_disks_bandwidth"]),
-                    float(obs[node]["write_disks_bandwidth"]),
-                    float(obs[node]["avg_latency"])
-                ])
-                # Метрики развертываний
-                if "deployments" in obs[node]:
-                    for deployment in self.deployments:
-                        if deployment in obs[node]["deployments"]:
-                            obs_array.append(float(obs[node]["deployments"][deployment]["replicas"]))
-                        else:
-                            obs_array.append(0.0)
-                else:
-                    for _ in self.deployments:
-                        obs_array.append(0.0)
-            return np.array(obs_array, dtype=np.float32)
-        elif isinstance(obs, tuple):
-            return self._flatten_observation(obs[0])
-        else:
-            raise ValueError(f"Unsupported observation type: {type(obs)}")
+            
+        # Сортируем узлы для стабильного порядка
+        sorted_nodes = sorted(obs.keys())
+        
+        # Создаем вектор наблюдения
+        obs_vector = []
+        for node in sorted_nodes:
+            node_obs = obs[node]
+            # Добавляем метрики оборудования
+            obs_vector.extend([
+                float(node_obs["cpu"]),
+                float(node_obs["ram"]),
+                float(node_obs["tx_bandwidth"]),
+                float(node_obs["rx_bandwidth"]),
+                float(node_obs["read_disks_bandwidth"]),
+                float(node_obs["write_disks_bandwidth"]),
+                float(node_obs["avg_latency"])
+            ])
+            # Добавляем метрики развертываний
+            for deployment in self.deployments:
+                obs_vector.append(float(node_obs["deployments"][deployment]["replicas"]))
+        
+        return np.array(obs_vector, dtype=np.float32)
 
     def select_action(self, state: Union[np.ndarray, Dict, Tuple]) -> Tuple[int, float, float]:
         """

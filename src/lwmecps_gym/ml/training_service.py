@@ -369,14 +369,16 @@ class TrainingService:
             if isinstance(env.observation_space, spaces.Box):
                 obs_dim = env.observation_space.shape[0]
             elif isinstance(env.observation_space, spaces.Dict):
-                # Для LWMECPSEnv: 7 метрик на узел + 1 метрика развертывания на узел
-                num_nodes = task.env_config.get("num_nodes", 3)
+                # Для LWMECPSEnv: 7 метрик на узел + метрики развертываний
+                num_nodes = len(node_names)  # Используем реальное количество узлов
                 num_deployments = len(task.env_config.get("deployments", ["mec-test-app"]))
                 obs_dim = num_nodes * (7 + num_deployments)  # 7 метрик оборудования + метрики развертываний
+                logger.info(f"Observation dimension: {obs_dim} (nodes: {num_nodes}, deployments: {num_deployments})")
             else:
                 raise ValueError(f"Unsupported observation space type: {type(env.observation_space)}")
 
             act_dim = env.action_space.n
+            logger.info(f"Action dimension: {act_dim}")
 
             # Создание агента в зависимости от типа модели
             if task.model_type == ModelType.PPO:
@@ -396,6 +398,7 @@ class TrainingService:
                     device="cuda" if torch.cuda.is_available() else "cpu",
                     deployments=task.env_config.get("deployments", ["mec-test-app"])
                 )
+                logger.info(f"Created PPO agent with observation dim: {obs_dim}, action dim: {act_dim}")
             elif task.model_type == ModelType.DQN:
                 agent = DQNAgent(env)
             elif task.model_type == ModelType.Q_LEARNING:
