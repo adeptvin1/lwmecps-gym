@@ -381,10 +381,24 @@ class TrainingService:
                             obs_dim += 1
                 
                 act_dim = env.action_space.n
+                # Map task parameters to PPO constructor parameters
+                ppo_params = {
+                    'lr': task.parameters.get('learning_rate', 3e-4),
+                    'gamma': task.parameters.get('gamma', 0.99),
+                    'lam': task.parameters.get('gae_lambda', 0.95),
+                    'clip_eps': task.parameters.get('clip_epsilon', 0.2),
+                    'ent_coef': task.parameters.get('entropy_coef', 0.01),
+                    'vf_coef': task.parameters.get('value_coef', 0.5),
+                    'hidden_size': 64,
+                    'n_steps': 2048,
+                    'batch_size': 64,
+                    'n_epochs': 10,
+                    'device': 'cpu'
+                }
                 agent = PPO(
                     obs_dim=obs_dim,
                     act_dim=act_dim,
-                    **task.parameters
+                    **ppo_params
                 )
                 # PPO uses timesteps instead of episodes
                 total_timesteps = task.total_episodes * 1000  # Approximate conversion
