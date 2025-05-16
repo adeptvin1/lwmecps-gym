@@ -58,12 +58,12 @@ def get_metrics(group_id: str, base_url: str = "http://localhost:8001") -> Dict[
         response.raise_for_status()
         stats = response.json()
         
-        # Process metrics for each node
+        # Process metrics for each experiment
         metrics = {}
-        for node, node_stats in stats.items():
-            metrics[node] = {
-                "avg_latency": node_stats.get("avg_latency", 0.0),
-                "concurrent_users": node_stats.get("concurrent_users", 0)
+        for exp_id, exp_stats in stats.get("experiments_stats", {}).items():
+            metrics[exp_id] = {
+                "avg_latency": exp_stats.get("average_latency", 0.0),
+                "concurrent_users": exp_stats.get("current_users", 0)
             }
         
         logger.info(f"Retrieved metrics for group {group_id}")

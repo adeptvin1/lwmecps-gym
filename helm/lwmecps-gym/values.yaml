@@ -68,10 +68,18 @@ mongodb:
     port: 27017
   image:
     repository: mongo
-    tag: "latest"
+    tag: "6.0"
+  auth:
+    enabled: true
+    rootPassword: ""  # Set this in production
+    database: "lwmecps"
+    username: "lwmecps"
+    password: ""  # Set this in production
   persistence:
     enabled: true
     size: 10Gi
+    storageClass: "standard"
+    accessMode: ReadWriteOnce
   resources:
     limits:
       cpu: 500m
@@ -79,13 +87,21 @@ mongodb:
     requests:
       cpu: 250m
       memory: 256Mi
+  backup:
+    enabled: false
+    schedule: "0 0 * * *"  # Daily at midnight
+    retention: 7  # Keep backups for 7 days
+    storageClass: "standard"
+    size: 5Gi
 
 # Weights & Biases configuration
 wandb:
   enabled: true
-  apiKey: ""
+  apiKey: ""  # Set this in production
   projectName: "lwmecps-gym"
-  entity: ""
+  entity: ""  # Set this in production
+  mode: "online"  # or "offline"
+  tags: []
 
 # Training configuration
 training:
@@ -97,6 +113,17 @@ training:
   defaultEpisodes: 1000
   modelSavePath: "/app/models"
   wandbLogsPath: "/app/wandb_logs"
+  persistence:
+    models:
+      enabled: true
+      size: 5Gi
+      storageClass: "standard"
+      accessMode: ReadWriteOnce
+    logs:
+      enabled: true
+      size: 2Gi
+      storageClass: "standard"
+      accessMode: ReadWriteOnce
 
 # Kubernetes cluster configuration
 kubernetes:

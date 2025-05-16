@@ -11,12 +11,12 @@ spec:
       {{- include "lwmecps-gym.selectorLabels" . | nindent 6 }}
   template:
     metadata:
-      labels:
-        {{- include "lwmecps-gym.selectorLabels" . | nindent 8 }}
       {{- with .Values.podAnnotations }}
       annotations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      labels:
+        {{- include "lwmecps-gym.selectorLabels" . | nindent 8 }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -37,13 +37,15 @@ spec:
               protocol: TCP
           env:
             - name: MONGODB_URL
-              value: "mongodb://{{ .Values.mongodb.service.name }}:{{ .Values.mongodb.service.port }}"
+              value: "mongodb://{{ .Values.mongodb.auth.username }}:{{ .Values.mongodb.auth.password }}@{{ .Values.mongodb.service.name }}:{{ .Values.mongodb.service.port }}/{{ .Values.mongodb.auth.database }}"
             - name: WANDB_API_KEY
               value: {{ .Values.wandb.apiKey | quote }}
             - name: WANDB_PROJECT_NAME
               value: {{ .Values.wandb.projectName | quote }}
             - name: WANDB_ENTITY
               value: {{ .Values.wandb.entity | quote }}
+            - name: WANDB_MODE
+              value: {{ .Values.wandb.mode | quote }}
             - name: KUBERNETES_SERVER
               value: {{ .Values.kubernetes.server | quote }}
             - name: KUBERNETES_NAMESPACE
@@ -53,29 +55,39 @@ spec:
             - name: KUBERNETES_MAX_PODS
               value: {{ .Values.kubernetes.maxPods | quote }}
           volumeMounts:
+            {{- if .Values.training.persistence.models.enabled }}
             - name: models
               mountPath: {{ .Values.training.modelSavePath }}
+            {{- end }}
+            {{- if .Values.training.persistence.logs.enabled }}
             - name: wandb-logs
               mountPath: {{ .Values.training.wandbLogsPath }}
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-          # livenessProbe:
-          #   httpGet:
-          #     path: /api/v1/health
-          #     port: http
-          #   initialDelaySeconds: 30
-          #   periodSeconds: 10
-          # readinessProbe:
-          #   httpGet:
-          #     path: /api/v1/health
-          #     port: http
-          #   initialDelaySeconds: 5
-          #   periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
       volumes:
+        {{- if .Values.training.persistence.models.enabled }}
         - name: models
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: {{ include "lwmecps-gym.fullname" }}-models
+        {{- end }}
+        {{- if .Values.training.persistence.logs.enabled }}
         - name: wandb-logs
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: {{ include "lwmecps-gym.fullname" }}-logs
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

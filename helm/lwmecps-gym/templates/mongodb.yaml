@@ -1,57 +1,124 @@
 {{- if .Values.mongodb.enabled -}}
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: v1
+kind: Secret
 metadata:
-  name: {{ include "lwmecps-gym.fullname" . }}-mongodb
+  name: {{ include "lwmecps-gym.fullname" }}-mongodb-secret
   labels:
-    app: mongodb
+    {{- include "lwmecps-gym.labels" . | nindent 4 }}
+type: Opaque
+data:
+  {{- if .Values.mongodb.auth.enabled }}
+  mongodb-root-password: {{ .Values.mongodb.auth.rootPassword | b64enc | quote }}
+  mongodb-password: {{ .Values.mongodb.auth.password | b64enc | quote }}
+  {{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "lwmecps-gym.fullname" }}-mongodb-config
+  labels:
+    {{- include "lwmecps-gym.labels" . | nindent 4 }}
+data:
+  mongod.conf: |
+    systemLog:
+      destination: file
+      path: /var/log/mongodb/mongod.log
+      logAppend: true
+    storage:
+      dbPath: /data/db
+    net:
+      bindIp: 0.0.0.0
+      port: {{ .Values.mongodb.service.port }}
+    {{- if .Values.mongodb.auth.enabled }}
+    security:
+      authorization: enabled
+    {{- end }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "lwmecps-gym.fullname" }}-mongodb
+  labels:
+    {{- include "lwmecps-gym.labels" . | nindent 4 }}
 spec:
+  serviceName: {{ include "lwmecps-gym.fullname" }}-mongodb
   replicas: 1
   selector:
     matchLabels:
-      app: mongodb
+      {{- include "lwmecps-gym.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: mongodb
   template:
     metadata:
       labels:
-        app: mongodb
+        {{- include "lwmecps-gym.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: mongodb
     spec:
       containers:
         - name: mongodb
           image: "{{ .Values.mongodb.image.repository }}:{{ .Values.mongodb.image.tag }}"
           ports:
-            - containerPort: 27017
-              name: mongodb
+            - name: mongodb
+              containerPort: {{ .Values.mongodb.service.port }}
+              protocol: TCP
+          env:
+            {{- if .Values.mongodb.auth.enabled }}
+            - name: MONGO_INITDB_ROOT_USERNAME
+              value: root
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "lwmecps-gym.fullname" }}-mongodb-secret
+                  key: mongodb-root-password
+            - name: MONGO_INITDB_DATABASE
+              value: {{ .Values.mongodb.auth.database }}
+            - name: MONGO_INITDB_USERNAME
+              value: {{ .Values.mongodb.auth.username }}
+            - name: MONGO_INITDB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "lwmecps-gym.fullname" }}-mongodb-secret
+                  key: mongodb-password
+            {{- end }}
           volumeMounts:
-            - name: mongodb-data
+            - name: data
               mountPath: /data/db
+            - name: config
+              mountPath: /etc/mongod.conf
+              subPath: mongod.conf
           resources:
             {{- toYaml .Values.mongodb.resources | nindent 12 }}
       volumes:
-        - name: mongodb-data
-          {{- if .Values.mongodb.persistence.enabled }}
-          persistentVolumeClaim:
-            claimName: {{ include "lwmecps-gym.fullname" . }}-mongodb
-          {{- else }}
-          emptyDir: {}
-          {{- end }}
+        - name: config
+          configMap:
+            name: {{ include "lwmecps-gym.fullname" }}-mongodb-config
+  {{- if .Values.mongodb.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ "{{ .Values.mongodb.persistence.accessMode }}" ]
+        storageClassName: {{ .Values.mongodb.persistence.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.mongodb.persistence.size }}
+  {{- end }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "lwmecps-gym.fullname" . }}-mongodb
+  name: {{ include "lwmecps-gym.fullname" }}-mongodb
   labels:
     {{- include "lwmecps-gym.labels" . | nindent 4 }}
-    app: mongodb
 spec:
-  type: ClusterIP
+  type: {{ .Values.mongodb.service.type }}
   ports:
-    - port: 27017
+    - port: {{ .Values.mongodb.service.port }}
       targetPort: mongodb
       protocol: TCP
       name: mongodb
   selector:
     {{- include "lwmecps-gym.selectorLabels" . | nindent 4 }}
-    app: mongodb
+    app.kubernetes.io/component: mongodb
 {{- if .Values.mongodb.persistence.enabled }}
 ---
 apiVersion: v1

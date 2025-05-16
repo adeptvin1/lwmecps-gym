@@ -3,6 +3,7 @@ import pickle
 import random
 import re
 from time import time
+import os
 
 import bitmath
 import gymnasium as gym
@@ -41,31 +42,47 @@ class QLearningAgent:
 
         # Инициализация wandb
         if self.wandb_run_id:
-            wandb.init(
-                project="lwmecps-gym",
-                id=self.wandb_run_id,
-                config={
-                    "learning_rate": learning_rate,
-                    "discount_factor": discount_factor,
-                    "exploration_rate": exploration_rate,
-                    "exploration_decay": exploration_decay,
-                    "model_type": "q_learning",
-                }
-            )
+            try:
+                wandb.init(
+                    project="lwmecps-gym",
+                    id=self.wandb_run_id,
+                    config={
+                        "learning_rate": learning_rate,
+                        "discount_factor": discount_factor,
+                        "exploration_rate": exploration_rate,
+                        "exploration_decay": exploration_decay,
+                        "model_type": "q_learning",
+                    }
+                )
+                print(f"Successfully initialized wandb run with ID {self.wandb_run_id}")
+            except Exception as e:
+                print(f"Failed to initialize wandb: {str(e)}")
+                self.wandb_run_id = None
 
     def save_q_table(self, file_name):
         try:
+            # Ensure the directory exists
+            os.makedirs(os.path.dirname(os.path.abspath(file_name)), exist_ok=True)
+            
+            # Save locally
             with open(file_name, "wb") as f:
                 pickle.dump(self.q_table, f)
             print(f"Q-таблица сохранена в {file_name}")
             
             # Save to wandb if initialized
             if self.wandb_run_id:
-                wandb.save(file_name)
-                # Also save as a wandb artifact
-                artifact = wandb.Artifact('q_table', type='model')
-                artifact.add_file(file_name)
-                wandb.log_artifact(artifact)
+                try:
+                    # Save as a wandb artifact
+                    artifact = wandb.Artifact('q_table', type='model')
+                    artifact.add_file(file_name)
+                    wandb.log_artifact(artifact)
+                    print(f"Successfully saved model to wandb as artifact")
+                    
+                    # Also save directly
+                    wandb.save(file_name)
+                    print(f"Successfully saved model file to wandb")
+                except Exception as e:
+                    print(f"Failed to save model to wandb: {str(e)}")
                 
         except Exception as e:
             print(f"Ошибка при сохранении Q-таблицы: {str(e)}")
@@ -171,26 +188,41 @@ class QLearningAgent:
                 
                 # Логируем метрики в wandb
                 if self.wandb_run_id:
-                    wandb.log({
-                        "episode": episode,
-                        "total_reward": total_reward,
-                        "steps": steps,
-                        "epsilon": self.exploration_rate,
-                        "latency": info.get("latency", 0)
-                    })
+                    try:
+                        metrics = {
+                            "episode": episode,
+                            "total_reward": total_reward,
+                            "steps": steps,
+                            "epsilon": self.exploration_rate,
+                            "latency": info.get("latency", 0)
+                        }
+                        wandb.log(metrics)
+                        print(f"Successfully logged metrics for episode {episode}")
+                    except Exception as e:
+                        print(f"Failed to log metrics to wandb: {str(e)}")
                 
                 # Сохраняем результаты после каждого эпизода
                 try:
-                    with open("./q_episode_latency.json", "w") as file:
+                    # Ensure the directory exists
+                    os.makedirs("metrics", exist_ok=True)
+                    
+                    # Save metrics files
+                    latency_file = os.path.join("metrics", "q_episode_latency.json")
+                    reward_file = os.path.join("metrics", "q_episode_reward.json")
+                    
+                    with open(latency_file, "w") as file:
                         json.dump(episode_latency, file, indent=4)
-
-                    with open("./q_episode_reward.json", "w") as file:
+                    with open(reward_file, "w") as file:
                         json.dump(episode_reward, file, indent=4)
 
                     # Сохраняем файлы в wandb
                     if self.wandb_run_id:
-                        wandb.save("./q_episode_latency.json")
-                        wandb.save("./q_episode_reward.json")
+                        try:
+                            wandb.save(latency_file)
+                            wandb.save(reward_file)
+                            print(f"Successfully saved metric files to wandb")
+                        except Exception as e:
+                            print(f"Failed to save metric files to wandb: {str(e)}")
                 except Exception as e:
                     print(f"Ошибка при сохранении результатов эпизода: {str(e)}")
             

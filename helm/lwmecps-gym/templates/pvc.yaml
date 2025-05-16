@@ -1,0 +1,31 @@
+{{- if .Values.training.persistence.models.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "lwmecps-gym.fullname" }}-models
+  labels:
+    {{- include "lwmecps-gym.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.training.persistence.models.accessMode }}
+  storageClassName: {{ .Values.training.persistence.models.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.training.persistence.models.size }}
+---
+{{- end }}
+{{- if .Values.training.persistence.logs.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "lwmecps-gym.fullname" }}-logs
+  labels:
+    {{- include "lwmecps-gym.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.training.persistence.logs.accessMode }}
+  storageClassName: {{ .Values.training.persistence.logs.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.training.persistence.logs.size }}
+{{- end }} 
