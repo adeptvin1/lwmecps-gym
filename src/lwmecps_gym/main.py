@@ -5,9 +5,11 @@ from pydantic import ValidationError
 import uvicorn
 from prometheus_client import make_asgi_app
 # from typing import List
+import logging
 
 from lwmecps_gym.api.router import router as api_router
 from lwmecps_gym.core.config import settings
+from lwmecps_gym.core.database import Database
 
 app = FastAPI(
     title="LWMECPS GYM API",
@@ -31,14 +33,24 @@ app.add_middleware(
 app.include_router(api_router, prefix="/api")
 
 # События приложения
-# @app.on_event("startup")
-# async def startup_db_client():
-#     await init_db()
+@app.on_event("startup")
+async def startup_db_client():
+    try:
+        db = Database()
+        await db.initialize()
+        logging.info("Database initialized successfully")
+    except Exception as e:
+        logging.error(f"Failed to initialize database: {e}")
+        raise
 
-# @app.on_event("shutdown")
-# async def shutdown_db_client():
-#     await close_db_connection()
-
+@app.on_event("shutdown")
+async def shutdown_db_client():
+    try:
+        db = Database()
+        await db.close()
+        logging.info("Database connection closed")
+    except Exception as e:
+        logging.error(f"Error closing database connection: {e}")
 
 # Обработка ошибок
 @app.exception_handler(ValidationError)
@@ -47,7 +59,6 @@ async def validation_exception_handler(request, exc):
         status_code=422,
         content={"detail": str(exc)},
     )
-
 
 # Корневой эндпоинт
 @app.get("/")

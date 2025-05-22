@@ -13,9 +13,17 @@ class InitialSchemaMigration(Migration):
     
     async def up(self) -> None:
         # Create collections
+        collections = await self.db.list_collection_names()
+        print(f"Existing collections before migration: {collections}")
+        
+        # Create collections
         await self.db.create_collection("training_tasks")
         await self.db.create_collection("training_results")
         await self.db.create_collection("reconciliation_results")
+        
+        # Verify collections were created
+        collections = await self.db.list_collection_names()
+        print(f"Collections after migration: {collections}")
         
         # Create indexes for training_tasks
         await self.db.training_tasks.create_index("state")

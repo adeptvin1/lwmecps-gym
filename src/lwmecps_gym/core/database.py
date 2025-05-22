@@ -7,6 +7,7 @@ from datetime import datetime
 from .models import TrainingTask, TrainingResult, ReconciliationResult
 from .migrations.manager import MigrationManager
 import logging
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -25,16 +26,21 @@ class Database:
         logger.info(f"Connecting to MongoDB at: {mongodb_url}")
         self.client = AsyncIOMotorClient(mongodb_url)
         self.db = self.client[database_name]
+        logger.info(f"Using database: {database_name}")
         self.migration_manager = MigrationManager(self.db)
         
     async def initialize(self):
         """Initialize database and run migrations"""
-        # Load migrations from the migrations directory
-        migrations_dir = os.path.join(os.path.dirname(__file__), "migrations")
-        self.migration_manager.load_migrations(migrations_dir)
-        
-        # Apply pending migrations
-        await self.migration_manager.apply_migrations()
+        try:
+            # Load migrations from the migrations directory
+            migrations_dir = os.path.join(os.path.dirname(__file__), "migrations")
+            self.migration_manager.load_migrations(migrations_dir)
+            
+            # Apply pending migrations
+            await self.migration_manager.apply_migrations()
+        except Exception as e:
+            logger.error(f"Error initializing database: {e}")
+            raise
     
     async def create_training_task(self, task: TrainingTask) -> TrainingTask:
         """Create a new training task"""

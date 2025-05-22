@@ -20,11 +20,14 @@ class MigrationManager:
             if f.endswith('.py') and not f.startswith('__') and f != 'base.py' and f != 'manager.py' and f != 'run_migrations.py'
         ]
         
-        # Use fixed package name for migrations
-        package = 'src.lwmecps_gym.core.migrations'
+        print(f"Found migration files: {migration_files}")
+        
+        # Use correct package name for migrations
+        package = 'lwmecps_gym.core.migrations'
         
         # Import all migration modules
         for migration_file in migration_files:
+            print(f"Loading migration from file: {migration_file}")
             module = importlib.import_module(f"{package}.{migration_file}")
             
             # Find all Migration subclasses in the module
@@ -32,10 +35,12 @@ class MigrationManager:
                 if (inspect.isclass(obj) and 
                     issubclass(obj, Migration) and 
                     obj != Migration):
+                    print(f"Found migration class: {name}")
                     self.migrations.append(obj)
         
         # Sort migrations by version (instantiate to get version)
         self.migrations.sort(key=lambda x: x(self.db).version)
+        print(f"Loaded {len(self.migrations)} migrations")
     
     async def apply_migrations(self) -> None:
         """Apply all pending migrations"""
