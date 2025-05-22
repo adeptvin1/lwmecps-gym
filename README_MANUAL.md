@@ -46,13 +46,53 @@ source venv/bin/activate
 venv\Scripts\activate
 ```
 
-4. **Install dependencies**:
+4. **Install dependencies and package**:
 ```bash
 # Install required packages
 pip install -r requirements.txt
 
 # Install the package in development mode
+# Make sure you're in the root directory of the project
 pip install -e .
+
+# Verify installation
+python -c "import lwmecps_gym; print(lwmecps_gym.__file__)"
+```
+
+Если вы видите ошибку `ModuleNotFoundError: No module named 'lwmecps_gym'`, выполните следующие шаги:
+
+1. **Проверьте структуру проекта**:
+```bash
+# Должна быть такая структура:
+lwmecps-gym/
+├── src/
+│   └── lwmecps_gym/
+│       ├── __init__.py
+│       ├── main.py
+│       └── ...
+├── setup.py
+└── requirements.txt
+```
+
+2. **Переустановите пакет**:
+```bash
+# Удалите текущую установку
+pip uninstall lwmecps-gym
+
+# Очистите кэш pip
+pip cache purge
+
+# Переустановите пакет
+pip install -e .
+```
+
+3. **Проверьте PYTHONPATH**:
+```bash
+# Добавьте путь к src в PYTHONPATH
+export PYTHONPATH=$PYTHONPATH:$(pwd)/src
+
+# Или запустите с явным указанием PYTHONPATH
+PYTHONPATH=$PYTHONPATH:$(pwd)/src python -m uvicorn src.lwmecps_gym.main:app --host 0.0.0.0 --port 8010 --reload
 ```
 
 ## Minikube Setup

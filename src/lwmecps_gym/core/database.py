@@ -5,6 +5,7 @@ from pydantic_settings import BaseSettings
 from bson import ObjectId
 from datetime import datetime
 from .models import TrainingTask, TrainingResult, ReconciliationResult
+from .migrations.manager import MigrationManager
 import logging
 
 logger = logging.getLogger(__name__)
@@ -20,10 +21,21 @@ class DatabaseSettings(BaseSettings):
 class Database:
     def __init__(self):
         mongodb_url = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
+        database_name = os.getenv("MONGODB_DATABASE", "lwmecps_gym")
         logger.info(f"Connecting to MongoDB at: {mongodb_url}")
         self.client = AsyncIOMotorClient(mongodb_url)
-        self.db = self.client.lwmecps_gym
+        self.db = self.client[database_name]
+        self.migration_manager = MigrationManager(self.db)
         
+    async def initialize(self):
+        """Initialize database and run migrations"""
+        # Load migrations from the migrations directory
+        migrations_dir = os.path.join(os.path.dirname(__file__), "migrations")
+        self.migration_manager.load_migrations(migrations_dir)
+        
+        # Apply pending migrations
+        await self.migration_manager.apply_migrations()
+    
     async def create_training_task(self, task: TrainingTask) -> TrainingTask:
         """Create a new training task"""
         task_dict = task.model_dump(by_alias=True, exclude={'id'})
