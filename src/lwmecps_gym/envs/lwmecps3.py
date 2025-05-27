@@ -76,12 +76,15 @@ class LWMECPSEnv3(gym.Env):
             # Initialize state for each node - simplified for Q-learning
             self.logger.info("Initializing state for each node")
             self.state = {
-                node: {
-                    "deployments": {
-                        deployment: {"replicas": 0} for deployment in self.deployments
-                    },
-                    "avg_latency": self.node_info[node]["avg_latency"]
-                } for node in self.node_name
+                "current_node": self.node_name[0],  # Track current node
+                "nodes": {
+                    node: {
+                        "deployments": {
+                            deployment: {"replicas": 0} for deployment in self.deployments
+                        },
+                        "avg_latency": self.node_info[node]["avg_latency"]
+                    } for node in self.node_name
+                }
             }
             self.logger.info(f"Initial state: {self.state}")
             
@@ -106,10 +109,14 @@ class LWMECPSEnv3(gym.Env):
                 group_metrics = metrics['group']
                 latency = group_metrics.get('avg_latency', 0.0)
                 for node in self.node_name:
-                    self.state[node]["avg_latency"] = latency
+                    self.state["nodes"][node]["avg_latency"] = latency
                     self.logger.info(f"Node {node} initial latency: {latency}ms")
             else:
                 self.logger.warning("No group metrics found, using default latencies")
+            
+            # Set initial node's replicas to 1
+            for deployment in self.deployments:
+                self.state["nodes"][initial_node]["deployments"][deployment]["replicas"] = 1
             
             return self.state, {}
             
@@ -127,7 +134,7 @@ class LWMECPSEnv3(gym.Env):
             # Update state: set all nodes to 0 replicas
             for node in self.node_name:
                 for deployment in self.deployments:
-                    self.state[node]["deployments"][deployment]["replicas"] = 0
+                    self.state["nodes"][node]["deployments"][deployment]["replicas"] = 0
             
             # Move pod to target node
             self.minikube.k8s_action(
@@ -138,9 +145,10 @@ class LWMECPSEnv3(gym.Env):
             )
             self.logger.info(f"Successfully moved pod to node {target_node}")
             
-            # Update state: set target node to 1 replica
+            # Update state: set target node to 1 replica and update current_node
             for deployment in self.deployments:
-                self.state[target_node]["deployments"][deployment]["replicas"] = 1
+                self.state["nodes"][target_node]["deployments"][deployment]["replicas"] = 1
+            self.state["current_node"] = target_node
             
             # Get updated metrics
             self.logger.info(f"Getting metrics for group {self.group_id}")
@@ -152,7 +160,7 @@ class LWMECPSEnv3(gym.Env):
                 group_metrics = metrics['group']
                 latency = group_metrics.get('avg_latency', 0.0)
                 for node in self.node_name:
-                    self.state[node]["avg_latency"] = latency
+                    self.state["nodes"][node]["avg_latency"] = latency
                     self.logger.info(f"Node {node} latency: {latency}ms")
             else:
                 self.logger.warning("No group metrics found, using default latencies")
@@ -172,7 +180,7 @@ class LWMECPSEnv3(gym.Env):
     
     def _calculate_reward(self, target_node: str) -> float:
         """Calculate reward based on current state and target node."""
-        latency = self.state[target_node]["avg_latency"]
+        latency = self.state["nodes"][target_node]["avg_latency"]
         
         # Base reward is inverse to latency
         reward = 1000 / (latency + 1)
