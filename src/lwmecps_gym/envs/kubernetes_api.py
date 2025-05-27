@@ -35,7 +35,7 @@ class k8s:
         
         # Test connection with timeout
         try:
-            self.core_api.list_namespace(timeout_seconds=self.timeout)
+            self.core_api.list_namespace(_request_timeout=self.timeout)
             logger.info("Successfully connected to Kubernetes API")
         except Exception as e:
             logger.error(f"Failed to connect to Kubernetes API: {str(e)}")
@@ -64,9 +64,9 @@ class k8s:
         """
         try:
             state = {}
-            list_nodes = self.core_api.list_node(timeout_seconds=self.timeout)
-            all_pods = self.core_api.list_pod_for_all_namespaces(timeout_seconds=self.timeout)
-            all_namespaces = self.core_api.list_namespace(timeout_seconds=self.timeout)
+            list_nodes = self.core_api.list_node(_request_timeout=self.timeout)
+            all_pods = self.core_api.list_pod_for_all_namespaces(_request_timeout=self.timeout)
+            all_namespaces = self.core_api.list_namespace(_request_timeout=self.timeout)
             
             if not list_nodes.items:
                 raise Exception("No nodes found in the cluster")
@@ -152,7 +152,7 @@ class k8s:
             deployment = self.app_api.read_namespaced_deployment(
                 name=deployment_name,
                 namespace=namespace,
-                timeout_seconds=self.timeout
+                _request_timeout=self.timeout
             )
             
             if not deployment:
@@ -167,7 +167,7 @@ class k8s:
                 name=deployment_name,
                 namespace=namespace,
                 body=deployment,
-                timeout_seconds=self.timeout
+                _request_timeout=self.timeout
             )
             logger.info(f"Updated deployment {deployment_name} to {replicas} replicas on node {node}")
             
@@ -199,7 +199,7 @@ class k8s:
             deployment = self.app_api.read_namespaced_deployment(
                 name=deployment_name,
                 namespace=namespace,
-                timeout_seconds=self.timeout
+                _request_timeout=self.timeout
             )
             
             if not deployment:
