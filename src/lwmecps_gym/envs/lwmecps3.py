@@ -46,14 +46,17 @@ class LWMECPSEnv3(gym.Env):
         
         # Observation space for each node - simplified for Q-learning
         self.observation_space = gym.spaces.Dict({
-            node: gym.spaces.Dict({
-                "deployments": gym.spaces.Dict({
-                    deployment: gym.spaces.Dict({
-                        "replicas": gym.spaces.Box(low=0, high=max_pods, shape=(), dtype=np.float32)
-                    }) for deployment in deployments
-                }),
-                "avg_latency": gym.spaces.Box(low=0, high=float('inf'), shape=(), dtype=np.float32)
-            }) for node in node_name
+            "current_node": gym.spaces.Text(max_length=50),  # Add current_node to observation space
+            "nodes": gym.spaces.Dict({
+                node: gym.spaces.Dict({
+                    "deployments": gym.spaces.Dict({
+                        deployment: gym.spaces.Dict({
+                            "replicas": gym.spaces.Box(low=0, high=max_pods, shape=(), dtype=np.float32)
+                        }) for deployment in deployments
+                    }),
+                    "avg_latency": gym.spaces.Box(low=0, high=float('inf'), shape=(), dtype=np.float32)
+                }) for node in node_name
+            })
         })
         
         # Initialize state
@@ -68,6 +71,10 @@ class LWMECPSEnv3(gym.Env):
         super().reset(seed=seed)
         
         try:
+            # Validate node_name
+            if not self.node_name:
+                raise ValueError("node_name list cannot be empty")
+            
             # Start the experiment group
             self.logger.info(f"Starting experiment group {self.group_id}")
             start_experiment_group(self.group_id, self.base_url)
@@ -108,6 +115,9 @@ class LWMECPSEnv3(gym.Env):
             if 'group' in metrics:
                 group_metrics = metrics['group']
                 latency = group_metrics.get('avg_latency', 0.0)
+                if latency < 0:
+                    self.logger.warning(f"Received negative latency: {latency}, using 0.0")
+                    latency = 0.0
                 for node in self.node_name:
                     self.state["nodes"][node]["avg_latency"] = latency
                     self.logger.info(f"Node {node} initial latency: {latency}ms")
@@ -127,6 +137,10 @@ class LWMECPSEnv3(gym.Env):
     def step(self, action: int) -> Tuple[Dict, float, bool, bool, Dict]:
         """Execute one time step within the environment."""
         try:
+            # Validate action
+            if not 0 <= action < self.num_nodes:
+                raise ValueError(f"Invalid action {action}. Must be between 0 and {self.num_nodes-1}")
+            
             # Move pod to the selected node
             target_node = self.node_name[action]
             self.logger.info(f"Moving pod to node {target_node}")
@@ -159,6 +173,9 @@ class LWMECPSEnv3(gym.Env):
             if 'group' in metrics:
                 group_metrics = metrics['group']
                 latency = group_metrics.get('avg_latency', 0.0)
+                if latency < 0:
+                    self.logger.warning(f"Received negative latency: {latency}, using 0.0")
+                    latency = 0.0
                 for node in self.node_name:
                     self.state["nodes"][node]["avg_latency"] = latency
                     self.logger.info(f"Node {node} latency: {latency}ms")
@@ -181,6 +198,11 @@ class LWMECPSEnv3(gym.Env):
     def _calculate_reward(self, target_node: str) -> float:
         """Calculate reward based on current state and target node."""
         latency = self.state["nodes"][target_node]["avg_latency"]
+        
+        # Ensure latency is non-negative
+        if latency < 0:
+            self.logger.warning(f"Negative latency detected: {latency}, using 0.0")
+            latency = 0.0
         
         # Base reward is inverse to latency
         reward = 1000 / (latency + 1)
