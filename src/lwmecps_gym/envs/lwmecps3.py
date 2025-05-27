@@ -124,6 +124,12 @@ class LWMECPSEnv3(gym.Env):
             target_node = self.node_name[action]
             self.logger.info(f"Moving pod to node {target_node}")
             
+            # Update state: set all nodes to 0 replicas
+            for node in self.node_name:
+                for deployment in self.deployments:
+                    self.state[node]["deployments"][deployment]["replicas"] = 0
+            
+            # Move pod to target node
             self.minikube.k8s_action(
                 namespace=self.namespace,
                 deployment_name=self.deployment_name,
@@ -131,6 +137,10 @@ class LWMECPSEnv3(gym.Env):
                 node=target_node
             )
             self.logger.info(f"Successfully moved pod to node {target_node}")
+            
+            # Update state: set target node to 1 replica
+            for deployment in self.deployments:
+                self.state[target_node]["deployments"][deployment]["replicas"] = 1
             
             # Get updated metrics
             self.logger.info(f"Getting metrics for group {self.group_id}")
