@@ -10,3 +10,4 @@ prometheus-client
 pydantic_settings
 wandb
 torch>=2.0.0
+tenacity

@@ -63,7 +63,7 @@ def start_experiment_group(group_id: str, base_url: str = "http://localhost:8001
             f"{base_url}/api/manage_group",
             params={
                 "group_id": group_id,
-                "state": "running"
+                "state": "start"
             },
             timeout=timeout
         )
