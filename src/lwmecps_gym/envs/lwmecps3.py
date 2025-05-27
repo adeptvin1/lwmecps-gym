@@ -137,15 +137,15 @@ class LWMECPSEnv3(gym.Env):
             metrics = get_metrics(self.group_id, self.base_url)
             self.logger.info(f"Received metrics: {metrics}")
             
-            # Update state with new metrics
-            for node in self.node_name:
-                node_metrics = metrics.get(node, {})
-                if node_metrics:
-                    latency = node_metrics.get("avg_latency", self.node_info[node]["avg_latency"])
+            # Update state with group metrics
+            if 'group' in metrics:
+                group_metrics = metrics['group']
+                latency = group_metrics.get('avg_latency', 0.0)
+                for node in self.node_name:
                     self.state[node]["avg_latency"] = latency
                     self.logger.info(f"Node {node} latency: {latency}ms")
-                else:
-                    self.logger.warning(f"No metrics found for node {node}")
+            else:
+                self.logger.warning("No group metrics found, using default latencies")
             
             # Calculate reward
             reward = self._calculate_reward(target_node)
