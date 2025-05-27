@@ -8,8 +8,15 @@ register(
 )
 
 register(
-    id='lwmecps-v1',
+    id='lwmecps-v2',
     entry_point='lwmecps_gym.envs:LWMECPSEnv2',
+    kwargs={
+    }
+)
+
+register(
+    id='lwmecps-v3',
+    entry_point='lwmecps_gym.envs:LWMECPSEnv3',
     kwargs={
     }
 )

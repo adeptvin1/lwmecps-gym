@@ -54,7 +54,7 @@ class LWMECPSEnv(gym.Env):
         logger.info("[LWMECPSEnv.__init__] Setting up observation space")
         self.observation_space = spaces.Dict(
             {
-                node: spaces.Dict(
+                self.deployment_name: spaces.Dict(
                     {
                         "cpu": spaces.Box(
                             low=0,
@@ -115,7 +115,6 @@ class LWMECPSEnv(gym.Env):
                         ),
                     }
                 )
-                for node in self.node_name
             }
         )
         self.state = None
@@ -216,7 +215,7 @@ class LWMECPSEnv(gym.Env):
             for node in self.node_name:
                 if node in self.state:
                     node_state = self.state[node]
-                    observation[node] = {
+                    observation[self.deployment_name] = {
                         "cpu": node_state["cpu"],
                         "ram": node_state["ram"],
                         "tx_bandwidth": node_state["tx_bandwidth"],
@@ -233,7 +232,7 @@ class LWMECPSEnv(gym.Env):
                     }
                 else:
                     # Если нода не найдена, создаем пустое состояние
-                    observation[node] = {
+                    observation[self.deployment_name] = {
                         "cpu": 0,
                         "ram": 0,
                         "tx_bandwidth": 0,
@@ -315,7 +314,7 @@ class LWMECPSEnv(gym.Env):
         for node in self.node_name:
             if node in self.state:
                 node_state = self.state[node]
-                observation[node] = {
+                observation[self.deployment_name] = {
                     "cpu": node_state["cpu"],
                     "ram": node_state["ram"],
                     "tx_bandwidth": node_state["tx_bandwidth"],
@@ -332,7 +331,7 @@ class LWMECPSEnv(gym.Env):
                 }
             else:
                 # Если нода не найдена, создаем пустое состояние
-                observation[node] = {
+                observation[self.deployment_name] = {
                     "cpu": 0,
                     "ram": 0,
                     "tx_bandwidth": 0,

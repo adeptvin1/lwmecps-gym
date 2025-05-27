@@ -13,13 +13,14 @@ from lwmecps_gym.ml.models.q_learn import QLearningAgent
 from .models.dq_learning import DQNAgent
 from .models.ppo_learning import PPO
 from gymnasium.envs.registration import register
-from lwmecps_gym.envs import LWMECPSEnv
+from lwmecps_gym.envs import LWMECPSEnv3
 import numpy as np
 from gymnasium import spaces
 import torch
 import re
 import bitmath
 from lwmecps_gym.envs.kubernetes_api import k8s
+import uuid
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -27,8 +28,8 @@ logger = logging.getLogger(__name__)
 
 # Register the environment
 register(
-    id="lwmecps-v0",
-    entry_point="lwmecps_gym.envs:LWMECPSEnv",
+    id="lwmecps-v3",
+    entry_point="lwmecps_gym.envs:LWMECPSEnv3",
 )
 
 class TrainingService:
@@ -55,6 +56,7 @@ class TrainingService:
         except config.ConfigException:
             config.load_kube_config()
         self.k8s_client = CoreV1Api()
+        self.minikube = k8s()
     
     async def create_training_task(self, task_data: Dict[str, Any]) -> TrainingTask:
         """
@@ -66,7 +68,22 @@ class TrainingService:
         Returns:
             Created TrainingTask instance
         """
-        task = TrainingTask(**task_data)
+        # Generate unique group_id for the experiment if not provided
+        if "group_id" not in task_data:
+            task_data["group_id"] = f"training-{uuid.uuid4()}"
+            
+        # Ensure group_id is stored in the task
+        task = TrainingTask(
+            name=task_data.get("name", "Training Task"),
+            description=task_data.get("description", ""),
+            model_type=task_data["model_type"],
+            parameters=task_data.get("parameters", {}),
+            env_config=task_data.get("env_config", {}),
+            model_config=task_data.get("model_config", {}),
+            state=task_data.get("state", TrainingState.PENDING),
+            total_episodes=task_data.get("total_episodes", 100),
+            group_id=task_data["group_id"]  # Ensure group_id is included
+        )
         return await self.db.create_training_task(task)
     
     async def start_training(self, task_id: str) -> Optional[TrainingTask]:
@@ -121,7 +138,131 @@ class TrainingService:
             logger.error(f"Error starting task {task_id}: {str(e)}")
             finish_wandb()
             return None
-    
+
+    async def _run_training(self, task_id: str, task: TrainingTask):
+        """
+        Run the training process for a specific task.
+        
+        Args:
+            task_id: Unique identifier of the training task
+            task: TrainingTask instance
+        """
+        try:
+            # Get Kubernetes state
+            state = self.minikube.k8s_state()
+            node_name = list(state.keys())
+
+            # Базовые параметры
+            max_hardware = {
+                "cpu": 8,
+                "ram": 16000,
+                "tx_bandwidth": 1000,
+                "rx_bandwidth": 1000,
+                "read_disks_bandwidth": 500,
+                "write_disks_bandwidth": 500,
+                "avg_latency": 300,
+            }
+
+            pod_usage = {
+                "cpu": 2,
+                "ram": 2000,
+                "tx_bandwidth": 20,
+                "rx_bandwidth": 20,
+                "read_disks_bandwidth": 100,
+                "write_disks_bandwidth": 100,
+            }
+
+            # Создаем информацию о узлах
+            node_info = {}
+            for node in node_name:
+                node_info[node] = {
+                    "cpu": int(state[node]["cpu"]),
+                    "ram": round(bitmath.KiB(int(re.findall(r"\d+", state[node]["memory"])[0])).to_MB().value),
+                    "tx_bandwidth": 100,
+                    "rx_bandwidth": 100,
+                    "read_disks_bandwidth": 300,
+                    "write_disks_bandwidth": 300,
+                    "avg_latency": 10 + (10 * list(node_name).index(node)),
+                }
+
+            # Create environment
+            env = gym.make(
+                "lwmecps-v3",
+                node_name=node_name,
+                max_hardware=max_hardware,
+                pod_usage=pod_usage,
+                node_info=node_info,
+                num_nodes=len(node_name),
+                namespace="default",
+                deployment_name="mec-test-app",
+                deployments=["mec-test-app"],
+                max_pods=10000,
+                group_id=task.group_id  # Используем group_id из задачи
+            )
+
+            # Initialize agent based on model type
+            if task.model_type == ModelType.Q_LEARNING:
+                agent = QLearningAgent(
+                    env,
+                    learning_rate=task.learning_rate,
+                    discount_factor=task.discount_factor,
+                    exploration_rate=task.exploration_rate,
+                    exploration_decay=task.exploration_decay,
+                    wandb_run_id=task.wandb_run_id
+                )
+            elif task.model_type == ModelType.DQN:
+                agent = DQNAgent(
+                    env,
+                    learning_rate=task.learning_rate,
+                    discount_factor=task.discount_factor,
+                    exploration_rate=task.exploration_rate,
+                    exploration_decay=task.exploration_decay,
+                    wandb_run_id=task.wandb_run_id
+                )
+            elif task.model_type == ModelType.PPO:
+                agent = PPO(
+                    env,
+                    learning_rate=task.learning_rate,
+                    discount_factor=task.discount_factor,
+                    exploration_rate=task.exploration_rate,
+                    exploration_decay=task.exploration_decay,
+                    wandb_run_id=task.wandb_run_id
+                )
+            else:
+                raise ValueError(f"Unsupported model type: {task.model_type}")
+
+            # Run training
+            results = agent.train(task.episodes)
+
+            # Save results
+            for episode in range(task.episodes):
+                metrics = {
+                    "total_reward": results["episode_reward"][episode],
+                    "steps": results["episode_steps"][episode],
+                    "epsilon": results["episode_exploration"][episode],
+                    "latency": results["episode_latency"][episode]
+                }
+                await self.save_training_result(task_id, episode, metrics)
+
+            # Save model
+            if task.model_type == ModelType.Q_LEARNING:
+                agent.save_q_table(f"./models/q_table_{task_id}.pkl")
+            else:
+                agent.save_model(f"./models/model_{task_id}.pth")
+
+            # Update task state
+            task.state = TrainingState.COMPLETED
+            await self.db.update_training_task(task_id, task.model_dump())
+
+        except Exception as e:
+            logger.error(f"Error in training process for task {task_id}: {str(e)}")
+            task.state = TrainingState.FAILED
+            await self.db.update_training_task(task_id, task.model_dump())
+            finish_wandb()
+        finally:
+            self.active_tasks[task_id] = False
+            env.close()
+
     async def pause_training(self, task_id: str) -> Optional[TrainingTask]:
         """
         Pause a running training task.
@@ -217,232 +358,22 @@ class TrainingService:
         
         return await self.db.save_training_result(result)
     
-    async def run_reconciliation(self, task_id: str, sample_size: int) -> ReconciliationResult:
-        """
-        Run model reconciliation on new data to validate model performance.
-        
-        Args:
-            task_id: Unique identifier of the training task
-            sample_size: Number of samples to use for reconciliation
-            
-        Returns:
-            Created ReconciliationResult instance
-        """
-        task = await self.db.get_training_task(task_id)
-        if not task:
-            raise ValueError(f"Task {task_id} not found")
-        
-        # Initialize Weights & Biases for reconciliation
-        init_wandb(self.wandb_config)
-        
-        # Download model weights from Weights & Biases based on model type
-        api = wandb.Api()
-        run = api.run(f"{self.wandb_config.project_name}/{task.wandb_run_id}")
-        
-        if task.model_type == ModelType.Q_LEARNING:
-            # For Q-learning, we need to download the Q-table artifact
-            artifacts = run.logged_artifacts()
-            q_table_artifact = next((art for art in artifacts if art.type == 'model'), None)
-            if not q_table_artifact:
-                raise ValueError("Q-table artifact not found in wandb run")
-            model_weights = q_table_artifact.download()
-        else:
-            # For DQN and PPO models
-            model_weights = run.file("model_weights.pth").download()
-        
-        # Run reconciliation logic (placeholder implementation)
-        metrics = {
-            "accuracy": 0.95,  # Example metrics
-            "loss": 0.05
-        }
-        
-        result = ReconciliationResult(
-            task_id=task_id,
-            model_type=task.model_type,
-            wandb_run_id=wandb.run.id,
-            metrics=metrics,
-            sample_size=sample_size,
-            model_weights_path=str(model_weights)
-        )
-        
-        # Log reconciliation metrics
-        log_metrics(metrics)
-        finish_wandb()
-        
-        return await self.db.save_reconciliation_result(result)
-    
     async def get_training_progress(self, task_id: str) -> Optional[Dict[str, Any]]:
         """
-        Get current training progress and metrics.
+        Get the current progress of a training task.
         
         Args:
             task_id: Unique identifier of the training task
             
         Returns:
-            Dictionary containing task info, latest metrics, and active status
+            Dictionary containing task progress information
         """
         task = await self.db.get_training_task(task_id)
         if not task:
             return None
         
-        results = await self.db.get_training_results(task_id)
-        
         return {
-            "task": task,
-            "latest_metrics": results[-1].metrics if results else None,
-            "is_active": self.active_tasks.get(task_id, False)
-        }
-    
-    async def _run_training(self, task_id: str, task: TrainingTask):
-        """
-        Запуск процесса обучения.
-        
-        Args:
-            task_id (str): ID задачи обучения
-            task (TrainingTask): Объект задачи обучения
-        """
-        try:
-            # Get Kubernetes cluster state
-            logger.info("Getting Kubernetes state...")
-            k8s_client = k8s()
-            nodes = self.k8s_client.list_node()
-            node_names = [node.metadata.name for node in nodes.items]
-            logger.info(f"Found nodes: {node_names}")
-            
-            # Define environment parameters
-            max_hardware = {
-                "cpu": 8,
-                "ram": 16000,
-                "tx_bandwidth": 1000,
-                "rx_bandwidth": 1000,
-                "read_disks_bandwidth": 500,
-                "write_disks_bandwidth": 500,
-                "avg_latency": 300,
-            }
-            
-            pod_usage = {
-                "cpu": 2,
-                "ram": 2000,
-                "tx_bandwidth": 20,
-                "rx_bandwidth": 20,
-                "read_disks_bandwidth": 100,
-                "write_disks_bandwidth": 100,
-            }
-            
-            # Get node info from Kubernetes state
-            node_info = {}
-            state = k8s_client.k8s_state()
-            for node in node_names:
-                if node in state:
-                    node_info[node] = {
-                        "cpu": int(state[node]["cpu"]),
-                        "ram": round(
-                            bitmath.KiB(int(re.findall(r"\d+", state[node]["memory"])[0]))
-                            .to_MB()
-                            .value
-                        ),
-                        "tx_bandwidth": 100,
-                        "rx_bandwidth": 100,
-                        "read_disks_bandwidth": 300,
-                        "write_disks_bandwidth": 300,
-                        "avg_latency": 10 + node_names.index(node) * 10,
-                    }
-            
-            # Create Gym environment
-            logger.info("Creating Gym environment...")
-            env = gym.make(
-                "lwmecps-v0",
-                num_nodes=len(node_names),
-                node_name=node_names,
-                max_hardware=max_hardware,
-                pod_usage=pod_usage,
-                node_info=node_info,
-                deployment_name=task.env_config.get("deployment_name", "mec-test-app"),
-                namespace=task.env_config.get("namespace", "default"),
-                deployments=task.env_config.get("deployments", ["mec-test-app"]),
-                max_pods=task.env_config.get("max_pods", 10000),
-            )
-            logger.info("Environment created successfully")
-
-            # Получение размерностей пространств
-            obs_dim = 0
-            if isinstance(env.observation_space, spaces.Box):
-                obs_dim = env.observation_space.shape[0]
-            elif isinstance(env.observation_space, spaces.Dict):
-                # Для LWMECPSEnv: 7 метрик на узел + метрики развертываний
-                num_nodes = len(node_names)  # Используем реальное количество узлов
-                num_deployments = len(task.env_config.get("deployments", ["mec-test-app"]))
-                obs_dim = num_nodes * (7 + num_deployments)  # 7 метрик оборудования + метрики развертываний
-                logger.info(f"Observation dimension: {obs_dim} (nodes: {num_nodes}, deployments: {num_deployments})")
-            else:
-                raise ValueError(f"Unsupported observation space type: {type(env.observation_space)}")
-
-            act_dim = env.action_space.n
-            logger.info(f"Action dimension: {act_dim}")
-
-            # Создание агента в зависимости от типа модели
-            if task.model_type == ModelType.PPO:
-                agent = PPO(
-                    obs_dim=obs_dim,
-                    act_dim=act_dim,
-                    hidden_size=task.model_config.get("hidden_size", 64),
-                    lr=task.model_config.get("lr", 3e-4),
-                    gamma=task.model_config.get("gamma", 0.99),
-                    lam=task.model_config.get("lam", 0.95),
-                    clip_eps=task.model_config.get("clip_eps", 0.2),
-                    ent_coef=task.model_config.get("ent_coef", 0.01),
-                    vf_coef=task.model_config.get("vf_coef", 0.5),
-                    n_steps=task.model_config.get("n_steps", 2048),
-                    batch_size=task.model_config.get("batch_size", 64),
-                    n_epochs=task.model_config.get("n_epochs", 10),
-                    device="cuda" if torch.cuda.is_available() else "cpu",
-                    deployments=task.env_config.get("deployments", ["mec-test-app"])
-                )
-                logger.info(f"Created PPO agent with observation dim: {obs_dim}, action dim: {act_dim}")
-            elif task.model_type == ModelType.DQN:
-                agent = DQNAgent(env)
-            elif task.model_type == ModelType.Q_LEARNING:
-                agent = QLearningAgent(env)
-            else:
-                raise ValueError(f"Unsupported model type: {task.model_type}")
-
-            # Загрузка модели, если указан путь
-            if task.model_path:
-                if task.model_type == ModelType.PPO:
-                    agent.load_model(task.model_path)
-                elif task.model_type == ModelType.DQN:
-                    agent.model.load_model(task.model_path)
-                elif task.model_type == ModelType.Q_LEARNING:
-                    agent.load_q_table(task.model_path)
-
-            # Вычисление общего количества шагов
-            total_timesteps = task.total_episodes * task.model_config.get("n_steps", 2048)
-
-            # Запуск обучения
-            results = agent.train(env, total_timesteps=total_timesteps)
-
-            # Сохранение результатов
-            task.state = TrainingState.COMPLETED
-            task.metrics = results
-            task.progress = 100.0
-            task.current_episode = task.total_episodes
-            await self.db.update_training_task(task_id, task.model_dump())
-
-            # Сохранение модели
-            if task.model_type == ModelType.PPO:
-                agent.save_model(f"models/ppo_model_{task_id}.pth")
-            elif task.model_type == ModelType.DQN:
-                agent.model.save_model(f"models/dqn_model_{task_id}.pth")
-            elif task.model_type == ModelType.Q_LEARNING:
-                agent.save_q_table(f"models/q_table_{task_id}.pkl")
-
-            # Завершение wandb
-            finish_wandb()
-
-        except Exception as e:
-            logger.error(f"Error in training task {task_id}: {str(e)}")
-            task.state = TrainingState.FAILED
-            task.error_message = str(e)
-            await self.db.update_training_task(task_id, task.model_dump())
-            finish_wandb()
-            raise 
+            "state": task.state,
+            "metrics": task.metrics,
+            "wandb_run_id": task.wandb_run_id
+        } 

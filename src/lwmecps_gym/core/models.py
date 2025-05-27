@@ -46,6 +46,7 @@ class TrainingTask(BaseModel):
     metrics: Dict[str, List[float]] = Field(default_factory=dict)
     error_message: Optional[str] = None
     model_path: Optional[str] = None
+    group_id: str
 
     model_config = {
         "allow_population_by_field_name": True,

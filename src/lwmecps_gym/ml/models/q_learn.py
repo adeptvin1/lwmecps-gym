@@ -142,10 +142,11 @@ class QLearningAgent:
         try:
             for node in self.original_env.node_name:
                 if node in state:
-                    namespace_deployments = state[node]["deployments"].get(self.original_env.namespace, {})
-                    deployment_info = namespace_deployments.get(self.original_env.deployment_name, {})
-                    if deployment_info.get("replicas", 0) > 0:
-                        return node
+                    # Проверяем наличие пода на узле через deployments
+                    deployments = state[node]["deployments"]
+                    if self.original_env.deployment_name in deployments:
+                        if deployments[self.original_env.deployment_name]["replicas"] > 0:
+                            return node
             # Если под не найден, возвращаем первую ноду
             return next(iter(state))
         except Exception as e:
@@ -166,19 +167,20 @@ class QLearningAgent:
                 
                 while True:
                     action = self.choose_action(state)
-                    next_state, reward, done, info = self.env.step(action)
+                    next_state, reward, done, truncated, info = self.env.step(action)
                     self.update_q_table(state, action, reward, next_state)
                     
                     total_reward += reward
                     steps += 1
                     
-                    if done:
+                    if done or truncated:
                         break
                     
                     state = next_state
                 
                 # Сохраняем метрики эпизода
-                episode_latency[episode] = info.get("latency", 0)
+                current_node = self.get_current_node(state)
+                episode_latency[episode] = state[current_node]["avg_latency"]
                 episode_reward[episode] = total_reward
                 episode_steps[episode] = steps
                 episode_exploration[episode] = self.exploration_rate
@@ -194,81 +196,47 @@ class QLearningAgent:
                             "total_reward": total_reward,
                             "steps": steps,
                             "epsilon": self.exploration_rate,
-                            "latency": info.get("latency", 0)
+                            "latency": state[current_node]["avg_latency"]
                         }
                         wandb.log(metrics)
                         print(f"Successfully logged metrics for episode {episode}")
                     except Exception as e:
                         print(f"Failed to log metrics to wandb: {str(e)}")
                 
-                # Сохраняем результаты после каждого эпизода
-                try:
-                    # Ensure the directory exists
-                    os.makedirs("metrics", exist_ok=True)
-                    
-                    # Save metrics files
-                    latency_file = os.path.join("metrics", "q_episode_latency.json")
-                    reward_file = os.path.join("metrics", "q_episode_reward.json")
-                    
-                    with open(latency_file, "w") as file:
-                        json.dump(episode_latency, file, indent=4)
-                    with open(reward_file, "w") as file:
-                        json.dump(episode_reward, file, indent=4)
-
-                    # Сохраняем файлы в wandb
-                    if self.wandb_run_id:
-                        try:
-                            wandb.save(latency_file)
-                            wandb.save(reward_file)
-                            print(f"Successfully saved metric files to wandb")
-                        except Exception as e:
-                            print(f"Failed to save metric files to wandb: {str(e)}")
-                except Exception as e:
-                    print(f"Ошибка при сохранении результатов эпизода: {str(e)}")
+                # Выводим прогресс каждые 10 эпизодов
+                if (episode + 1) % 10 == 0:
+                    print(f"Episode {episode + 1}/{episodes}")
+                    print(f"Total Reward: {total_reward}")
+                    print(f"Steps: {steps}")
+                    print(f"Epsilon: {self.exploration_rate}")
+                    print(f"Latency: {state[current_node]['avg_latency']}")
+                    print("---")
             
-            # Возвращаем метрики в двух форматах
             return {
-                # Метрики для TrainingTask (списки)
-                "task_metrics": {
-                    "final_latency": [float(episode_latency.get(episodes - 1, 0))],
-                    "final_reward": [float(episode_reward.get(episodes - 1, 0))],
-                    "final_steps": [float(episode_steps.get(episodes - 1, 0))],
-                    "final_exploration": [float(episode_exploration.get(episodes - 1, 0))],
-                    "avg_latency": [float(sum(episode_latency.values()) / len(episode_latency) if episode_latency else 0)],
-                    "avg_reward": [float(sum(episode_reward.values()) / len(episode_reward) if episode_reward else 0)],
-                    "avg_steps": [float(sum(episode_steps.values()) / len(episode_steps) if episode_steps else 0)]
-                },
-                # Метрики для TrainingResult (числа)
-                "result_metrics": {
-                    "final_latency": float(episode_latency.get(episodes - 1, 0)),
-                    "final_reward": float(episode_reward.get(episodes - 1, 0)),
-                    "final_steps": float(episode_steps.get(episodes - 1, 0)),
-                    "final_exploration": float(episode_exploration.get(episodes - 1, 0)),
-                    "avg_latency": float(sum(episode_latency.values()) / len(episode_latency) if episode_latency else 0),
-                    "avg_reward": float(sum(episode_reward.values()) / len(episode_reward) if episode_reward else 0),
-                    "avg_steps": float(sum(episode_steps.values()) / len(episode_steps) if episode_steps else 0)
-                }
+                "episode_latency": episode_latency,
+                "episode_reward": episode_reward,
+                "episode_steps": episode_steps,
+                "episode_exploration": episode_exploration
             }
-
+            
         except Exception as e:
-            print(f"Ошибка во время обучения: {str(e)}")
+            print(f"Ошибка при обучении: {str(e)}")
             raise
-        finally:
-            # Завершаем сессию wandb
-            if self.wandb_run_id:
-                wandb.finish()
 
 
 if __name__ == "__main__":
-
+    # Регистрируем окружение
     register(
-        id="lwmecps-v0",
-        entry_point="lwmecps_gym.envs:LWMECPSEnv",
+        id="lwmecps-v3",
+        entry_point="lwmecps_gym.envs:LWMECPSEnv3",
     )
+
+    # Инициализируем Kubernetes клиент
     minikube = k8s()
+    state = minikube.k8s_state()
+    node_name = list(state.keys())
 
-    node_name = []
-
+    # Базовые параметры
     max_hardware = {
         "cpu": 8,
         "ram": 16000,
@@ -288,58 +256,35 @@ if __name__ == "__main__":
         "write_disks_bandwidth": 100,
     }
 
-    state = minikube.k8s_state()
-
-    max_pods = 10000
-
-    for node in state:
-        node_name.append(node)
-
-    avg_latency = 10
+    # Создаем информацию о узлах
     node_info = {}
-
-    for node in state:
-        avg_latency = avg_latency + 10
+    for node in node_name:
         node_info[node] = {
             "cpu": int(state[node]["cpu"]),
-            "ram": round(
-                bitmath.KiB(int(re.findall(r"\d+", state[node]["memory"])[0]))
-                .to_MB()
-                .value
-            ),
+            "ram": round(bitmath.KiB(int(re.findall(r"\d+", state[node]["memory"])[0])).to_MB().value),
             "tx_bandwidth": 100,
             "rx_bandwidth": 100,
             "read_disks_bandwidth": 300,
             "write_disks_bandwidth": 300,
-            "avg_latency": avg_latency,
+            "avg_latency": 10 + (10 * list(node_name).index(node)),  # Увеличиваем задержку для каждого следующего узла
         }
-        # Работатет только пока находятся в том же порядке.
-        max_pods = min(
-            [
-                min(
-                    [
-                        val // pod_usage[key]
-                        for key, (_, val) in zip(
-                            pod_usage.keys(), node_info[node].items()
-                        )
-                    ]
-                ),
-                max_pods,
-            ]
-        )
 
+    # Создаем окружение
     env = gym.make(
-        "lwmecps-v0",
-        num_nodes=len(node_name),
+        "lwmecps-v3",
         node_name=node_name,
         max_hardware=max_hardware,
         pod_usage=pod_usage,
         node_info=node_info,
-        deployment_name="mec-test-app",
+        num_nodes=len(node_name),
         namespace="default",
+        deployment_name="mec-test-app",
         deployments=["mec-test-app"],
-        max_pods=max_pods,
+        max_pods=10000,
+        group_id="test-group-1"
     )
+
+    # Создаем и обучаем агента
     agent = QLearningAgent(env)
     start = time()
     agent.train(episodes=100)
