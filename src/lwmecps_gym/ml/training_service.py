@@ -203,12 +203,12 @@ class TrainingService:
             # Initialize agent based on model type
             if task.model_type == ModelType.Q_LEARNING:
                 agent = QLearningAgent(
-                    env,
-                    learning_rate=task.learning_rate,
-                    discount_factor=task.discount_factor,
-                    exploration_rate=task.exploration_rate,
-                    exploration_decay=task.exploration_decay,
-                    wandb_run_id=task.wandb_run_id
+                    state_size=len(node_name),
+                    action_size=len(node_name),
+                    learning_rate=task.parameters.get("learning_rate", 0.1),
+                    discount_factor=task.parameters.get("discount_factor", 0.9),
+                    exploration_rate=task.parameters.get("exploration_rate", 1.0),
+                    exploration_decay=task.parameters.get("exploration_decay", 0.98)
                 )
             elif task.model_type == ModelType.DQN:
                 agent = DQNAgent(
