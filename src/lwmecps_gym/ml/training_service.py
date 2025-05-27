@@ -197,7 +197,8 @@ class TrainingService:
                 deployment_name="mec-test-app",
                 deployments=["mec-test-app"],
                 max_pods=10000,
-                group_id=task.group_id  # Используем group_id из задачи
+                group_id=task.group_id,  # Используем group_id из задачи
+                env_config=task.env_config  # Передаем env_config
             )
 
             # Initialize agent based on model type
@@ -232,10 +233,10 @@ class TrainingService:
                 raise ValueError(f"Unsupported model type: {task.model_type}")
 
             # Run training
-            results = agent.train(task.episodes)
+            results = agent.train(task.total_episodes)
 
             # Save results
-            for episode in range(task.episodes):
+            for episode in range(task.total_episodes):
                 metrics = {
                     "total_reward": results["episode_reward"][episode],
                     "steps": results["episode_steps"][episode],

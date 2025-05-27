@@ -21,7 +21,8 @@ class LWMECPSEnv3(gym.Env):
         deployments: List[str],
         max_pods: int,
         group_id: str,
-        base_url: str = "http://localhost:8001"
+        base_url: str = "http://localhost:8001",
+        env_config: Dict[str, Any] = None
     ):
         super().__init__()
         
@@ -35,7 +36,7 @@ class LWMECPSEnv3(gym.Env):
         self.deployments = deployments
         self.max_pods = max_pods
         self.group_id = group_id
-        self.base_url = base_url
+        self.base_url = env_config.get("base_url", base_url) if env_config else base_url
         
         # Initialize Kubernetes client
         self.minikube = k8s()
