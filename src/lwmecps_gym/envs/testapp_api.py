@@ -94,7 +94,7 @@ def get_metrics(group_id: str, base_url: str = "http://localhost:8001", timeout:
         timeout (int): Request timeout in seconds
         
     Returns:
-        Dict[str, Dict[str, Union[float, int]]]: Metrics for each node
+        Dict[str, Dict[str, Union[float, int]]]: Metrics for the group
         
     Raises:
         RequestException: If the request fails
@@ -119,11 +119,18 @@ def get_metrics(group_id: str, base_url: str = "http://localhost:8001", timeout:
             raise RequestException(f"Unexpected status code: {response.status_code}")
             
         stats = response.json()
-        if not isinstance(stats, dict) or "experiments_stats" not in stats:
+        if not isinstance(stats, dict):
             raise ValueError("Invalid response format")
         
-        # Process metrics for each experiment
-        metrics = {}
+        # Process metrics
+        metrics = {
+            "group": {
+                "avg_latency": stats.get("average_latency", 0.0),
+                "concurrent_users": stats.get("total_requests", 0)
+            }
+        }
+        
+        # Add experiment-specific metrics if available
         for exp_id, exp_stats in stats.get("experiments_stats", {}).items():
             if not isinstance(exp_stats, dict):
                 logger.warning(f"Invalid experiment stats format for {exp_id}")
