@@ -166,10 +166,22 @@ class QLearningAgent:
             if not isinstance(state, dict):
                 return False
                 
+            # Check for required top-level keys
+            if "current_node" not in state or "nodes" not in state:
+                return False
+                
+            # Check current_node
+            if not isinstance(state["current_node"], str):
+                return False
+                
+            # Check nodes structure
+            if not isinstance(state["nodes"], dict):
+                return False
+                
             for node in self.original_env.node_name:
-                if node not in state:
+                if node not in state["nodes"]:
                     return False
-                node_state = state[node]
+                node_state = state["nodes"][node]
                 if not isinstance(node_state, dict):
                     return False
                 if "deployments" not in node_state or "avg_latency" not in node_state:
@@ -178,6 +190,19 @@ class QLearningAgent:
                     return False
                 if not isinstance(node_state["avg_latency"], (int, float)):
                     return False
+                    
+                # Check deployments
+                for deployment in self.original_env.deployments:
+                    if deployment not in node_state["deployments"]:
+                        return False
+                    deployment_state = node_state["deployments"][deployment]
+                    if not isinstance(deployment_state, dict):
+                        return False
+                    if "replicas" not in deployment_state:
+                        return False
+                    if not isinstance(deployment_state["replicas"], (int, float)):
+                        return False
+                        
             return True
         except Exception as e:
             logger.error(f"Error validating state: {str(e)}")
@@ -281,13 +306,7 @@ class QLearningAgent:
             if not self.validate_state(state):
                 return None
                 
-            for node in self.original_env.node_name:
-                if node in state:
-                    deployments = state[node]["deployments"]
-                    if self.original_env.deployment_name in deployments:
-                        if deployments[self.original_env.deployment_name]["replicas"] > 0:
-                            return node
-            return None
+            return state["current_node"]
         except Exception as e:
             logger.error(f"Error getting current node: {str(e)}")
             return None
