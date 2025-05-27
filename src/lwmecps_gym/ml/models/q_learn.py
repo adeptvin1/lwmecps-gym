@@ -161,6 +161,7 @@ class QLearningAgent:
         
         try:
             for episode in range(episodes):
+                print(f"\nStarting episode {episode + 1}/{episodes}")
                 state = self.env.reset()[0]  # Получаем только observation
                 total_reward = 0
                 steps = 0
@@ -172,6 +173,15 @@ class QLearningAgent:
                     
                     total_reward += reward
                     steps += 1
+                    
+                    # Логируем текущее состояние и награду
+                    current_node = self.get_current_node(state)
+                    print(f"Step {steps}:")
+                    print(f"  Current node: {current_node}")
+                    print(f"  Action: {action} (node {self.original_env.node_name[action]})")
+                    print(f"  Reward: {reward}")
+                    print(f"  State: {state}")
+                    print(f"  Total reward so far: {total_reward}")
                     
                     if done or truncated:
                         break
@@ -188,6 +198,13 @@ class QLearningAgent:
                 # Обновляем epsilon
                 self.exploration_rate = max(0.01, self.exploration_rate * self.exploration_decay)
                 
+                # Логируем итоги эпизода
+                print(f"\nEpisode {episode + 1} completed:")
+                print(f"  Total steps: {steps}")
+                print(f"  Total reward: {total_reward}")
+                print(f"  Final latency: {state[current_node]['avg_latency']}ms")
+                print(f"  Exploration rate: {self.exploration_rate}")
+                
                 # Логируем метрики в wandb
                 if self.wandb_run_id:
                     try:
@@ -202,15 +219,6 @@ class QLearningAgent:
                         print(f"Successfully logged metrics for episode {episode}")
                     except Exception as e:
                         print(f"Failed to log metrics to wandb: {str(e)}")
-                
-                # Выводим прогресс каждые 10 эпизодов
-                if (episode + 1) % 10 == 0:
-                    print(f"Episode {episode + 1}/{episodes}")
-                    print(f"Total Reward: {total_reward}")
-                    print(f"Steps: {steps}")
-                    print(f"Epsilon: {self.exploration_rate}")
-                    print(f"Latency: {state[current_node]['avg_latency']}")
-                    print("---")
             
             return {
                 "episode_latency": episode_latency,

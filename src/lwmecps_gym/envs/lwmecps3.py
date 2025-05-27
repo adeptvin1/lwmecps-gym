@@ -69,9 +69,12 @@ class LWMECPSEnv3(gym.Env):
         
         try:
             # Start the experiment group
+            self.logger.info(f"Starting experiment group {self.group_id}")
             start_experiment_group(self.group_id, self.base_url)
+            self.logger.info(f"Successfully started experiment group {self.group_id}")
             
             # Initialize state for each node - simplified for Q-learning
+            self.logger.info("Initializing state for each node")
             self.state = {
                 node: {
                     "deployments": {
@@ -80,21 +83,32 @@ class LWMECPSEnv3(gym.Env):
                     "avg_latency": self.node_info[node]["avg_latency"]
                 } for node in self.node_name
             }
+            self.logger.info(f"Initial state: {self.state}")
             
             # Place initial pod on the first node
+            initial_node = self.node_name[0]
+            self.logger.info(f"Placing initial pod on node {initial_node}")
             self.minikube.k8s_action(
                 namespace=self.namespace,
                 deployment_name=self.deployment_name,
                 replicas=1,
-                node=self.node_name[0]
+                node=initial_node
             )
+            self.logger.info(f"Successfully placed initial pod on node {initial_node}")
             
             # Update state with initial metrics
+            self.logger.info("Getting initial metrics")
             metrics = get_metrics(self.group_id, self.base_url)
+            self.logger.info(f"Received initial metrics: {metrics}")
+            
             for node in self.node_name:
                 node_metrics = metrics.get(node, {})
                 if node_metrics:
-                    self.state[node]["avg_latency"] = node_metrics.get("avg_latency", self.node_info[node]["avg_latency"])
+                    latency = node_metrics.get("avg_latency", self.node_info[node]["avg_latency"])
+                    self.state[node]["avg_latency"] = latency
+                    self.logger.info(f"Node {node} initial latency: {latency}ms")
+                else:
+                    self.logger.warning(f"No initial metrics found for node {node}")
             
             return self.state, {}
             
@@ -107,15 +121,20 @@ class LWMECPSEnv3(gym.Env):
         try:
             # Move pod to the selected node
             target_node = self.node_name[action]
+            self.logger.info(f"Moving pod to node {target_node}")
+            
             self.minikube.k8s_action(
                 namespace=self.namespace,
                 deployment_name=self.deployment_name,
                 replicas=1,
                 node=target_node
             )
+            self.logger.info(f"Successfully moved pod to node {target_node}")
             
             # Get updated metrics
+            self.logger.info(f"Getting metrics for group {self.group_id}")
             metrics = get_metrics(self.group_id, self.base_url)
+            self.logger.info(f"Received metrics: {metrics}")
             
             # Update state with new metrics
             for node in self.node_name:
@@ -124,9 +143,12 @@ class LWMECPSEnv3(gym.Env):
                     latency = node_metrics.get("avg_latency", self.node_info[node]["avg_latency"])
                     self.state[node]["avg_latency"] = latency
                     self.logger.info(f"Node {node} latency: {latency}ms")
+                else:
+                    self.logger.warning(f"No metrics found for node {node}")
             
             # Calculate reward
             reward = self._calculate_reward(target_node)
+            self.logger.info(f"Calculated reward for node {target_node}: {reward}")
             
             # Check if episode is done
             done = False
