@@ -92,10 +92,20 @@ class k8s:
                     continue
                     
                 # Get node capacity
+                if not hasattr(node, 'status'):
+                    logger.warning(f"Node {node_name} has no status, skipping")
+                    continue
+                    
+                if not hasattr(node.status, 'capacity'):
+                    logger.warning(f"Node {node_name} has no capacity information, skipping")
+                    continue
+                    
                 capacity = node.status.capacity
                 if not capacity:
                     logger.warning(f"Node {node_name} has no capacity information, skipping")
                     continue
+                    
+                logger.info(f"Node {node_name} capacity: {capacity}")
                     
                 # Extract CPU and memory values
                 cpu = capacity.get('cpu')

@@ -220,11 +220,13 @@ class TrainingService:
                     # Extract memory value
                     memory_value = node_state['memory']
                     if isinstance(memory_value, str):
-                        memory_match = re.findall(r"\d+", memory_value)
-                        if not memory_match:
-                            logger.warning(f"Could not extract memory value from {memory_value}. Skipping node {node}.")
+                        # Remove 'Ki' suffix and convert to integer
+                        memory_value = memory_value.replace('Ki', '')
+                        try:
+                            memory_value = int(memory_value)
+                        except ValueError:
+                            logger.warning(f"Could not convert memory value {memory_value} to integer. Skipping node {node}.")
                             continue
-                        memory_value = int(memory_match[0])
 
                     node_info[node] = {
                         "cpu": cpu_value,
@@ -235,6 +237,7 @@ class TrainingService:
                         "write_disks_bandwidth": 300,
                         "avg_latency": 10 + (10 * list(node_name).index(node)),
                     }
+                    logger.info(f"Created node info for {node}: {node_info[node]}")
                 except Exception as e:
                     logger.error(f"Error processing node {node}: {str(e)}")
                     continue
