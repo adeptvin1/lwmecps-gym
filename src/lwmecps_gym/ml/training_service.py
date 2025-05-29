@@ -287,9 +287,12 @@ class TrainingService:
             logger.info(f"Initializing agent of type {task.model_type}")
             if task.model_type == ModelType.Q_LEARNING:
                 agent = QLearningAgent(
-                    env,
-                    **task.parameters,
-                    wandb_run_id=task.wandb_run_id
+                    learning_rate=task.parameters.get("learning_rate", 0.1),
+                    discount_factor=task.parameters.get("discount_factor", 0.95),
+                    exploration_rate=task.parameters.get("exploration_rate", 1.0),
+                    exploration_decay=task.parameters.get("exploration_decay", 0.995),
+                    min_exploration_rate=task.parameters.get("min_exploration_rate", 0.01),
+                    max_states=task.parameters.get("max_states", 10000)
                 )
             elif task.model_type == ModelType.DQN:
                 agent = DQNAgent(
@@ -354,7 +357,7 @@ class TrainingService:
             if task.model_type in [ModelType.PPO, ModelType.TD3, ModelType.SAC]:
                 results = agent.train(env, total_timesteps=task.total_episodes * agent.n_steps)
             else:
-                results = agent.train(task.total_episodes)
+                results = agent.train(env, task.total_episodes, wandb_run_id=task.wandb_run_id)
 
             # Save results
             if task.model_type in [ModelType.PPO, ModelType.TD3, ModelType.SAC]:
