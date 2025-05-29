@@ -152,6 +152,8 @@ class TrainingService:
         try:
             # Get Kubernetes state
             state = self.minikube.k8s_state()
+            if state is None:
+                raise Exception("Failed to get Kubernetes cluster state. No valid nodes found.")
             node_name = list(state.keys())
 
             # Базовые параметры

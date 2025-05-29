@@ -64,15 +64,23 @@ class k8s:
         """
         try:
             state = {}
+            logger.info("Fetching Kubernetes cluster state...")
             list_nodes = self.core_api.list_node(_request_timeout=self.timeout)
+            logger.info(f"Found {len(list_nodes.items)} nodes")
+            
             all_pods = self.core_api.list_pod_for_all_namespaces(_request_timeout=self.timeout)
+            logger.info(f"Found {len(all_pods.items)} pods")
+            
             all_namespaces = self.core_api.list_namespace(_request_timeout=self.timeout)
+            logger.info(f"Found {len(all_namespaces.items)} namespaces")
             
             if not list_nodes.items:
-                raise Exception("No nodes found in the cluster")
+                logger.error("No nodes found in the cluster")
+                return None
             
             block_ns = ['kube-node-lease', 'kube-public', 'kube-system', 'kubernetes-dashboard']
             namespaces = [namespace.metadata.name for namespace in all_namespaces.items if namespace.metadata.name not in block_ns]
+            logger.info(f"Using namespaces: {namespaces}")
 
             pod_count = {namespace: {} for namespace in namespaces}
 
@@ -91,6 +99,7 @@ class k8s:
                     
                 state[node_name] = capacity
                 state[node_name]['deployments'] = {}
+                logger.info(f"Processing node {node_name} with capacity: {capacity}")
                 
                 for pod in all_pods.items:
                     if pod.spec.node_name == node_name and pod.metadata.namespace in namespaces:
@@ -118,7 +127,8 @@ class k8s:
                         }
             
             if not state:
-                raise Exception("No valid nodes found in the cluster")
+                logger.error("No valid nodes found in the cluster")
+                return None
                 
             # Validate state
             for node_name, node_state in state.items():
@@ -126,7 +136,7 @@ class k8s:
                     logger.warning(f"Invalid state for node {node_name}")
                     continue
                 
-            logger.info(f"Found nodes: {list(state.keys())}")
+            logger.info(f"Successfully collected state for nodes: {list(state.keys())}")
             return state
         except ApiException as e:
             logger.error(f"Failed to get Kubernetes state: {str(e)}")
