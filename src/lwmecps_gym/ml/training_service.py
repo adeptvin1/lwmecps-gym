@@ -23,6 +23,7 @@ import re
 import bitmath
 from lwmecps_gym.envs.kubernetes_api import k8s
 import uuid
+from bson.objectid import ObjectId
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -150,11 +151,20 @@ class TrainingService:
             task: TrainingTask instance
         """
         try:
+            # Convert task_id to ObjectId for MongoDB operations
+            task_id_obj = ObjectId(task_id)
+            
             # Get Kubernetes state
             state = self.minikube.k8s_state()
             if state is None:
                 raise Exception("Failed to get Kubernetes cluster state. No valid nodes found.")
+            
+            if not isinstance(state, dict):
+                raise Exception(f"Invalid state type: {type(state)}. Expected dict.")
+                
             node_name = list(state.keys())
+            if not node_name:
+                raise Exception("No nodes found in cluster state.")
 
             # Базовые параметры
             max_hardware = {
@@ -180,7 +190,15 @@ class TrainingService:
             node_info = {}
             for node in node_name:
                 try:
+                    if node not in state:
+                        logger.warning(f"Node {node} not found in state. Skipping.")
+                        continue
+                        
                     node_state = state[node]
+                    if not isinstance(node_state, dict):
+                        logger.warning(f"Invalid node state type for {node}: {type(node_state)}. Skipping.")
+                        continue
+                        
                     if not all(key in node_state for key in ['cpu', 'memory']):
                         logger.warning(f"Node {node} is missing required fields. Skipping.")
                         continue

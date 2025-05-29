@@ -97,9 +97,20 @@ class k8s:
                     logger.warning(f"Node {node_name} has no capacity information, skipping")
                     continue
                     
-                state[node_name] = capacity
-                state[node_name]['deployments'] = {}
-                logger.info(f"Processing node {node_name} with capacity: {capacity}")
+                # Extract CPU and memory values
+                cpu = capacity.get('cpu')
+                memory = capacity.get('memory')
+                
+                if not cpu or not memory:
+                    logger.warning(f"Node {node_name} is missing required capacity fields (cpu or memory), skipping")
+                    continue
+                    
+                state[node_name] = {
+                    'cpu': cpu,
+                    'memory': memory,
+                    'deployments': {}
+                }
+                logger.info(f"Processing node {node_name} with capacity: CPU={cpu}, Memory={memory}")
                 
                 for pod in all_pods.items:
                     if pod.spec.node_name == node_name and pod.metadata.namespace in namespaces:
