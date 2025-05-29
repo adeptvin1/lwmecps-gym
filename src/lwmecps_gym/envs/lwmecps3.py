@@ -38,8 +38,8 @@ class LWMECPSEnv3(gym.Env):
         self.deployments = deployments
         self.max_pods = max_pods
         self.group_id = group_id
-        self.base_url = base_url  # Use base_url directly
-        self.stabilization_time = stabilization_time  # Use stabilization_time directly
+        self.base_url = env_config.get("base_url", base_url) if env_config else base_url
+        self.stabilization_time = int(env_config.get("stabilization_time", stabilization_time)) if env_config else stabilization_time
         
         # Initialize Kubernetes client
         self.minikube = k8s()
@@ -90,7 +90,7 @@ class LWMECPSEnv3(gym.Env):
                 "nodes": {
                     node: {
                         "deployments": {
-                            deployment: {"replicas": 0} for deployment in self.deployments
+                            deployment: {"replicas": np.float32(0)} for deployment in self.deployments
                         },
                         "avg_latency": self.node_info[node]["avg_latency"]
                     } for node in self.node_name
@@ -169,7 +169,7 @@ class LWMECPSEnv3(gym.Env):
             
             # Update state: set target node to 1 replica and update current_node
             for deployment in self.deployments:
-                self.state["nodes"][target_node]["deployments"][deployment]["replicas"] = 1
+                self.state["nodes"][target_node]["deployments"][deployment]["replicas"] = np.float32(1)
             self.state["current_node"] = target_node
             
             # Get updated metrics
