@@ -90,9 +90,9 @@ class LWMECPSEnv3(gym.Env):
                 "nodes": {
                     node: {
                         "deployments": {
-                            deployment: {"replicas": np.float32(0)} for deployment in self.deployments
+                            deployment: {"replicas": float(0)} for deployment in self.deployments
                         },
-                        "avg_latency": self.node_info[node]["avg_latency"]
+                        "avg_latency": float(self.node_info[node]["avg_latency"])
                     } for node in self.node_name
                 }
             }
@@ -122,7 +122,7 @@ class LWMECPSEnv3(gym.Env):
                     self.logger.warning(f"Received negative latency: {latency}, using 0.0")
                     latency = 0.0
                 for node in self.node_name:
-                    self.state["nodes"][node]["avg_latency"] = latency
+                    self.state["nodes"][node]["avg_latency"] = float(latency)
                     self.logger.info(f"Node {node} initial latency: {latency}ms")
             else:
                 self.logger.warning("No group metrics found, using default latencies")
@@ -169,7 +169,7 @@ class LWMECPSEnv3(gym.Env):
             
             # Update state: set target node to 1 replica and update current_node
             for deployment in self.deployments:
-                self.state["nodes"][target_node]["deployments"][deployment]["replicas"] = np.float32(1)
+                self.state["nodes"][target_node]["deployments"][deployment]["replicas"] = float(1)
             self.state["current_node"] = target_node
             
             # Get updated metrics
@@ -185,7 +185,7 @@ class LWMECPSEnv3(gym.Env):
                     self.logger.warning(f"Received negative latency: {latency}, using 0.0")
                     latency = 0.0
                 for node in self.node_name:
-                    self.state["nodes"][node]["avg_latency"] = latency
+                    self.state["nodes"][node]["avg_latency"] = float(latency)
                     self.logger.info(f"Node {node} latency: {latency}ms")
             else:
                 self.logger.warning("No group metrics found, using default latencies")
