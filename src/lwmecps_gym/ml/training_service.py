@@ -288,12 +288,7 @@ class TrainingService:
             if task.model_type == ModelType.Q_LEARNING:
                 agent = QLearningAgent(
                     env,
-                    learning_rate=task.parameters.get("learning_rate", 0.1),
-                    discount_factor=task.parameters.get("discount_factor", 0.9),
-                    exploration_rate=task.parameters.get("exploration_rate", 1.0),
-                    exploration_decay=task.parameters.get("exploration_decay", 0.98),
-                    min_exploration_rate=task.parameters.get("min_exploration_rate", 0.01),
-                    max_states=task.parameters.get("max_states", 1000),
+                    **task.parameters,
                     wandb_run_id=task.wandb_run_id
                 )
             elif task.model_type == ModelType.DQN:
