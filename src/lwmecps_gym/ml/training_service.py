@@ -179,15 +179,41 @@ class TrainingService:
             # Создаем информацию о узлах
             node_info = {}
             for node in node_name:
-                node_info[node] = {
-                    "cpu": int(state[node]["cpu"]),
-                    "ram": round(bitmath.KiB(int(re.findall(r"\d+", state[node]["memory"])[0])).to_MB().value),
-                    "tx_bandwidth": 100,
-                    "rx_bandwidth": 100,
-                    "read_disks_bandwidth": 300,
-                    "write_disks_bandwidth": 300,
-                    "avg_latency": 10 + (10 * list(node_name).index(node)),
-                }
+                try:
+                    node_state = state[node]
+                    if not all(key in node_state for key in ['cpu', 'memory']):
+                        logger.warning(f"Node {node} is missing required fields. Skipping.")
+                        continue
+
+                    # Extract CPU value
+                    cpu_value = node_state['cpu']
+                    if isinstance(cpu_value, str):
+                        cpu_value = int(cpu_value)
+                    
+                    # Extract memory value
+                    memory_value = node_state['memory']
+                    if isinstance(memory_value, str):
+                        memory_match = re.findall(r"\d+", memory_value)
+                        if not memory_match:
+                            logger.warning(f"Could not extract memory value from {memory_value}. Skipping node {node}.")
+                            continue
+                        memory_value = int(memory_match[0])
+
+                    node_info[node] = {
+                        "cpu": cpu_value,
+                        "ram": round(bitmath.KiB(memory_value).to_MB().value),
+                        "tx_bandwidth": 100,
+                        "rx_bandwidth": 100,
+                        "read_disks_bandwidth": 300,
+                        "write_disks_bandwidth": 300,
+                        "avg_latency": 10 + (10 * list(node_name).index(node)),
+                    }
+                except Exception as e:
+                    logger.error(f"Error processing node {node}: {str(e)}")
+                    continue
+
+            if not node_info:
+                raise Exception("No valid nodes could be processed")
 
             # Create environment
             env = gym.make(
