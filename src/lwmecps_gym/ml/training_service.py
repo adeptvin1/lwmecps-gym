@@ -153,9 +153,13 @@ class TrainingService:
         try:
             # Convert task_id to ObjectId for MongoDB operations
             task_id_obj = ObjectId(task_id)
+            logger.info(f"Starting training process for task {task_id}")
             
             # Get Kubernetes state
+            logger.info("Fetching Kubernetes cluster state...")
             state = self.minikube.k8s_state()
+            logger.info(f"Received state: {state}")
+            
             if state is None:
                 raise Exception("Failed to get Kubernetes cluster state. No valid nodes found.")
             
@@ -163,6 +167,8 @@ class TrainingService:
                 raise Exception(f"Invalid state type: {type(state)}. Expected dict.")
                 
             node_name = list(state.keys())
+            logger.info(f"Found nodes: {node_name}")
+            
             if not node_name:
                 raise Exception("No nodes found in cluster state.")
 
@@ -190,17 +196,20 @@ class TrainingService:
             node_info = {}
             for node in node_name:
                 try:
+                    logger.info(f"Processing node {node}")
                     if node not in state:
                         logger.warning(f"Node {node} not found in state. Skipping.")
                         continue
                         
                     node_state = state[node]
+                    logger.info(f"Node state: {node_state}")
+                    
                     if not isinstance(node_state, dict):
                         logger.warning(f"Invalid node state type for {node}: {type(node_state)}. Skipping.")
                         continue
                         
                     if not all(key in node_state for key in ['cpu', 'memory']):
-                        logger.warning(f"Node {node} is missing required fields. Skipping.")
+                        logger.warning(f"Node {node} is missing required fields. Found keys: {list(node_state.keys())}")
                         continue
 
                     # Extract CPU value
