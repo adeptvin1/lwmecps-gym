@@ -2,6 +2,7 @@ import gymnasium as gym
 import numpy as np
 from typing import Dict, List, Tuple, Union, Any
 import logging
+import time
 from lwmecps_gym.envs.testapp_api import start_experiment_group, get_metrics
 from lwmecps_gym.envs.kubernetes_api import k8s
 
@@ -22,7 +23,8 @@ class LWMECPSEnv3(gym.Env):
         max_pods: int,
         group_id: str,
         base_url: str = "http://localhost:8001",
-        env_config: Dict[str, Any] = None
+        env_config: Dict[str, Any] = None,
+        stabilization_time: int = 10  # Default stabilization time in seconds
     ):
         super().__init__()
         
@@ -37,6 +39,7 @@ class LWMECPSEnv3(gym.Env):
         self.max_pods = max_pods
         self.group_id = group_id
         self.base_url = env_config.get("base_url", base_url) if env_config else base_url
+        self.stabilization_time = int(env_config.get("stabilization_time", stabilization_time)) if env_config else stabilization_time
         
         # Initialize Kubernetes client
         self.minikube = k8s()
@@ -158,6 +161,11 @@ class LWMECPSEnv3(gym.Env):
                 node=target_node
             )
             self.logger.info(f"Successfully moved pod to node {target_node}")
+            
+            # Wait for system stabilization
+            self.logger.info(f"Waiting {self.stabilization_time} seconds for system stabilization...")
+            time.sleep(self.stabilization_time)
+            self.logger.info("Stabilization period completed")
             
             # Update state: set target node to 1 replica and update current_node
             for deployment in self.deployments:

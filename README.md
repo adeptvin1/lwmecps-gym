@@ -4,15 +4,56 @@ A reinforcement learning environment for Lightweight MEC Placement Strategy (LWM
 
 ## Overview
 
-This project provides a Gymnasium environment for training reinforcement learning agents to optimize MEC (Multi-Access Edge Computing) placement in Kubernetes clusters. It uses Q-Learning to learn optimal pod placement strategies based on node resources and network conditions.
+This project provides a Gymnasium environment for training reinforcement learning agents to optimize MEC (Multi-Access Edge Computing) placement in Kubernetes clusters. It supports multiple reinforcement learning algorithms including Q-Learning, DQN, PPO, TD3, and SAC.
 
 ## Key Features
 
 - **Kubernetes Integration**: Direct interaction with Kubernetes clusters through the official Python client
-- **Q-Learning Implementation**: Custom Q-Learning agent with epsilon-greedy exploration strategy
+- **Multiple RL Algorithms**: Support for Q-Learning, DQN, PPO, TD3, and SAC
 - **Experiment Tracking**: Integration with Weights & Biases for experiment monitoring and visualization
 - **MongoDB Storage**: Persistent storage for training tasks and results
 - **RESTful API**: FastAPI-based endpoints for task management and monitoring
+- **System Stabilization**: Configurable stabilization time after pod movements
+
+## Environment Configuration
+
+The environment can be configured with the following parameters:
+
+```python
+env = gym.make(
+    "lwmecps-v3",
+    node_name=node_name,
+    max_hardware=max_hardware,
+    pod_usage=pod_usage,
+    node_info=node_info,
+    num_nodes=len(node_name),
+    namespace="default",
+    deployment_name="mec-test-app",
+    deployments=["mec-test-app"],
+    max_pods=10000,
+    group_id="test-group-1",
+    env_config={
+        "base_url": "http://localhost:8001",
+        "stabilization_time": 10  # Time in seconds to wait after pod movement
+    }
+)
+```
+
+### Environment Parameters
+
+- `node_name`: List of node names in the cluster
+- `max_hardware`: Maximum hardware resources available
+- `pod_usage`: Resource usage per pod
+- `node_info`: Information about each node's resources and latency
+- `num_nodes`: Number of nodes in the cluster
+- `namespace`: Kubernetes namespace
+- `deployment_name`: Name of the deployment to manage
+- `deployments`: List of deployment names
+- `max_pods`: Maximum number of pods allowed
+- `group_id`: Unique identifier for the experiment group
+- `env_config`: Additional configuration options
+  - `base_url`: Base URL for the test application API
+  - `stabilization_time`: Time in seconds to wait after pod movement for system stabilization (default: 10, integer)
 
 ## Project Structure
 
@@ -44,7 +85,9 @@ docker-compose up -d
 ```
 
 4. Create and start a training task:
+
 ```bash
+# Q-Learning Example
 curl -X POST "http://localhost:8010/api/v1/training/tasks" \
      -H "Content-Type: application/json" \
      -d '{
@@ -59,6 +102,71 @@ curl -X POST "http://localhost:8010/api/v1/training/tasks" \
        },
        "total_episodes": 1000
      }'
+
+# PPO Training Example
+curl -X POST "http://localhost:8010/api/v1/training/tasks" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "name": "PPO Training",
+       "description": "Training PPO agent for pod placement",
+       "model_type": "ppo",
+       "parameters": {
+         "learning_rate": 3e-4,
+         "discount_factor": 0.99,
+         "lambda": 0.95,
+         "clip_epsilon": 0.2,
+         "entropy_coef": 0.0,
+         "value_function_coef": 0.5,
+         "n_steps": 2048,
+         "batch_size": 64,
+         "n_epochs": 10,
+         "device": "cpu",
+         "deployments": ["mec-test-app"]
+       },
+       "total_episodes": 1000
+     }'
+
+# TD3 Training Example
+curl -X POST "http://localhost:8010/api/v1/training/tasks" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "name": "TD3 Training",
+       "description": "Training TD3 agent for pod placement",
+       "model_type": "td3",
+       "parameters": {
+         "learning_rate": 3e-4,
+         "discount_factor": 0.99,
+         "tau": 0.005,
+         "policy_delay": 2,
+         "noise_clip": 0.5,
+         "noise": 0.2,
+         "batch_size": 256,
+         "device": "cpu",
+         "deployments": ["mec-test-app"]
+       },
+       "total_episodes": 1000
+     }'
+
+# SAC Training Example
+curl -X POST "http://localhost:8010/api/v1/training/tasks" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "name": "SAC Training",
+       "description": "Training SAC agent for pod placement",
+       "model_type": "sac",
+       "parameters": {
+         "learning_rate": 3e-4,
+         "discount_factor": 0.99,
+         "tau": 0.005,
+         "alpha": 0.2,
+         "auto_entropy": true,
+         "target_entropy": -1.0,
+         "batch_size": 256,
+         "device": "cpu",
+         "deployments": ["mec-test-app"]
+       },
+       "total_episodes": 1000
+     }'
 ```
 
 ## API Endpoints
@@ -70,6 +178,53 @@ curl -X POST "http://localhost:8010/api/v1/training/tasks" \
 - `POST /api/v1/training/tasks/{task_id}/resume`: Resume training
 - `POST /api/v1/training/tasks/{task_id}/stop`: Stop training
 - `GET /api/v1/training/tasks/{task_id}/progress`: Get training progress
+
+## Algorithm Parameters
+
+### Q-Learning
+- `learning_rate`: Learning rate for Q-value updates (default: 0.1)
+- `discount_factor`: Discount factor for future rewards (default: 0.95)
+- `exploration_rate`: Initial exploration rate (default: 1.0)
+- `exploration_decay`: Rate at which exploration rate decays (default: 0.995)
+
+### DQN
+- `learning_rate`: Learning rate for neural network (default: 0.001)
+- `discount_factor`: Discount factor for future rewards (default: 0.99)
+- `epsilon`: Exploration rate (default: 0.1)
+- `memory_size`: Size of replay buffer (default: 10000)
+- `batch_size`: Batch size for training (default: 32)
+
+### PPO
+- `learning_rate`: Learning rate for neural network (default: 3e-4)
+- `discount_factor`: Discount factor for future rewards (default: 0.99)
+- `lambda`: GAE-Lambda parameter (default: 0.95)
+- `clip_epsilon`: PPO clip parameter (default: 0.2)
+- `entropy_coef`: Entropy coefficient (default: 0.0)
+- `value_function_coef`: Value function coefficient (default: 0.5)
+- `n_steps`: Number of steps per update (default: 2048)
+- `batch_size`: Batch size for training (default: 64)
+- `n_epochs`: Number of epochs per update (default: 10)
+- `device`: Device to use for training (default: "cpu")
+
+### TD3
+- `learning_rate`: Learning rate for neural networks (default: 3e-4)
+- `discount_factor`: Discount factor for future rewards (default: 0.99)
+- `tau`: Target network update rate (default: 0.005)
+- `policy_delay`: Policy update delay (default: 2)
+- `noise_clip`: Noise clip range (default: 0.5)
+- `noise`: Action noise scale (default: 0.2)
+- `batch_size`: Batch size for training (default: 256)
+- `device`: Device to use for training (default: "cpu")
+
+### SAC
+- `learning_rate`: Learning rate for neural networks (default: 3e-4)
+- `discount_factor`: Discount factor for future rewards (default: 0.99)
+- `tau`: Target network update rate (default: 0.005)
+- `alpha`: Initial entropy coefficient (default: 0.2)
+- `auto_entropy`: Whether to automatically tune entropy (default: true)
+- `target_entropy`: Target entropy for automatic tuning (default: -1.0)
+- `batch_size`: Batch size for training (default: 256)
+- `device`: Device to use for training (default: "cpu")
 
 ## Helm Deployment
 
@@ -411,23 +566,4 @@ The following table lists the configurable parameters of the chart and their def
 | `wandb.entity` | Weights & Biases entity | `""` |
 | `training.defaultParameters` | Default training parameters | See values.yaml |
 | `kubernetes.server` | Kubernetes API server URL | `https://kubernetes.default.svc` |
-| `kubernetes.namespace` | Target namespace for deployments | `default` |
-
-### Upgrading
-
-To upgrade the deployment:
-
-```bash
-helm upgrade lwmecps-gym ./helm/lwmecps-gym \
-  --namespace your-namespace \
-  -f my-values.yaml
-```
-
-### Uninstalling
-
-To uninstall the deployment:
-
-```bash
-helm uninstall lwmecps-gym -n your-namespace
-```
-
+| `kubernetes.namespace` | Target namespace for deployments | `default`

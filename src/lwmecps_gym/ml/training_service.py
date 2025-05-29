@@ -12,6 +12,8 @@ from kubernetes.client import CoreV1Api
 from lwmecps_gym.ml.models.q_learn import QLearningAgent
 from .models.dq_learning import DQNAgent
 from .models.ppo_learning import PPO
+from .models.td3_learning import TD3
+from .models.sac_learning import SAC
 from gymnasium.envs.registration import register
 from lwmecps_gym.envs import LWMECPSEnv3
 import numpy as np
@@ -197,53 +199,114 @@ class TrainingService:
                 deployment_name="mec-test-app",
                 deployments=["mec-test-app"],
                 max_pods=10000,
-                group_id=task.group_id,  # Используем group_id из задачи
-                env_config=task.env_config  # Передаем env_config
+                group_id=task.group_id,
             )
 
-            # Initialize agent based on model type
+            # Get observation and action dimensions
+            obs_dim = env.observation_space.shape[0]
+            act_dim = env.action_space.n
+
+            # Initialize appropriate agent based on model type
             if task.model_type == ModelType.Q_LEARNING:
                 agent = QLearningAgent(
-                    env=env,
+                    env,
                     learning_rate=task.parameters.get("learning_rate", 0.1),
                     discount_factor=task.parameters.get("discount_factor", 0.9),
                     exploration_rate=task.parameters.get("exploration_rate", 1.0),
                     exploration_decay=task.parameters.get("exploration_decay", 0.98),
+                    min_exploration_rate=task.parameters.get("min_exploration_rate", 0.01),
+                    max_states=task.parameters.get("max_states", 1000),
                     wandb_run_id=task.wandb_run_id
                 )
             elif task.model_type == ModelType.DQN:
                 agent = DQNAgent(
                     env,
-                    learning_rate=task.learning_rate,
-                    discount_factor=task.discount_factor,
-                    exploration_rate=task.exploration_rate,
-                    exploration_decay=task.exploration_decay,
-                    wandb_run_id=task.wandb_run_id
+                    learning_rate=task.parameters.get("learning_rate", 0.001),
+                    discount_factor=task.parameters.get("discount_factor", 0.99),
+                    epsilon=task.parameters.get("epsilon", 0.1),
+                    memory_size=task.parameters.get("memory_size", 10000),
+                    batch_size=task.parameters.get("batch_size", 32)
                 )
             elif task.model_type == ModelType.PPO:
                 agent = PPO(
-                    env,
-                    learning_rate=task.learning_rate,
-                    discount_factor=task.discount_factor,
-                    exploration_rate=task.exploration_rate,
-                    exploration_decay=task.exploration_decay,
-                    wandb_run_id=task.wandb_run_id
+                    obs_dim=obs_dim,
+                    act_dim=act_dim,
+                    hidden_size=task.parameters.get("hidden_size", 64),
+                    lr=task.parameters.get("learning_rate", 3e-4),
+                    gamma=task.parameters.get("discount_factor", 0.99),
+                    lam=task.parameters.get("lambda", 0.95),
+                    clip_eps=task.parameters.get("clip_epsilon", 0.2),
+                    ent_coef=task.parameters.get("entropy_coef", 0.0),
+                    vf_coef=task.parameters.get("value_function_coef", 0.5),
+                    n_steps=task.parameters.get("n_steps", 2048),
+                    batch_size=task.parameters.get("batch_size", 64),
+                    n_epochs=task.parameters.get("n_epochs", 10),
+                    device=task.parameters.get("device", "cpu"),
+                    deployments=task.parameters.get("deployments", ["mec-test-app"])
+                )
+            elif task.model_type == ModelType.TD3:
+                agent = TD3(
+                    obs_dim=obs_dim,
+                    act_dim=act_dim,
+                    hidden_size=task.parameters.get("hidden_size", 256),
+                    lr=task.parameters.get("learning_rate", 3e-4),
+                    gamma=task.parameters.get("discount_factor", 0.99),
+                    tau=task.parameters.get("tau", 0.005),
+                    policy_delay=task.parameters.get("policy_delay", 2),
+                    noise_clip=task.parameters.get("noise_clip", 0.5),
+                    noise=task.parameters.get("noise", 0.2),
+                    batch_size=task.parameters.get("batch_size", 256),
+                    device=task.parameters.get("device", "cpu"),
+                    deployments=task.parameters.get("deployments", ["mec-test-app"])
+                )
+            elif task.model_type == ModelType.SAC:
+                agent = SAC(
+                    obs_dim=obs_dim,
+                    act_dim=act_dim,
+                    hidden_size=task.parameters.get("hidden_size", 256),
+                    lr=task.parameters.get("learning_rate", 3e-4),
+                    gamma=task.parameters.get("discount_factor", 0.99),
+                    tau=task.parameters.get("tau", 0.005),
+                    alpha=task.parameters.get("alpha", 0.2),
+                    auto_entropy=task.parameters.get("auto_entropy", True),
+                    target_entropy=task.parameters.get("target_entropy", -1.0),
+                    batch_size=task.parameters.get("batch_size", 256),
+                    device=task.parameters.get("device", "cpu"),
+                    deployments=task.parameters.get("deployments", ["mec-test-app"])
                 )
             else:
                 raise ValueError(f"Unsupported model type: {task.model_type}")
 
             # Run training
-            results = agent.train(task.total_episodes)
+            if task.model_type in [ModelType.PPO, ModelType.TD3, ModelType.SAC]:
+                results = agent.train(env, total_timesteps=task.total_episodes * agent.n_steps)
+            else:
+                results = agent.train(task.total_episodes)
 
             # Save results
-            for episode in range(task.total_episodes):
-                metrics = {
-                    "total_reward": results["episode_reward"][episode],
-                    "steps": results["episode_steps"][episode],
-                    "epsilon": results["episode_exploration"][episode],
-                    "latency": results["episode_latency"][episode]
-                }
-                await self.save_training_result(task_id, episode, metrics)
+            if task.model_type in [ModelType.PPO, ModelType.TD3, ModelType.SAC]:
+                for episode in range(len(results["episode_rewards"])):
+                    metrics = {
+                        "total_reward": results["episode_rewards"][episode],
+                        "steps": results["episode_lengths"][episode],
+                        "actor_loss": results["actor_losses"][episode],
+                        "critic_loss": results["critic_losses"][episode],
+                        "total_loss": results["total_losses"][episode],
+                        "mean_reward": results["mean_rewards"][episode],
+                        "mean_length": results["mean_lengths"][episode]
+                    }
+                    if task.model_type == ModelType.SAC:
+                        metrics["alpha_loss"] = results["alpha_losses"][episode]
+                    await self.save_training_result(task_id, episode, metrics)
+            else:
+                for episode in range(task.total_episodes):
+                    metrics = {
+                        "total_reward": results["episode_reward"][episode],
+                        "steps": results["episode_steps"][episode],
+                        "epsilon": results["episode_exploration"][episode],
+                        "latency": results["episode_latency"][episode]
+                    }
+                    await self.save_training_result(task_id, episode, metrics)
 
             # Save model
             if task.model_type == ModelType.Q_LEARNING:

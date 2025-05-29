@@ -4,6 +4,7 @@ import random
 import re
 from collections import deque
 from time import time
+from typing import Dict, List, Optional
 
 import bitmath
 import gymnasium as gym
@@ -11,6 +12,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import wandb
 from gymnasium.envs.registration import register
 from lwmecps_gym.envs.kubernetes_api import k8s
 
@@ -96,6 +98,7 @@ class DQNAgent:
         )
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
         self.update_target_network()
+        self.metrics_collector = MetricsCollector()
 
     def update_target_network(self):
         self.target_model.load_state_dict(self.model.state_dict())
@@ -109,9 +112,40 @@ class DQNAgent:
             action = self.env.action_space.sample()
         return action
 
+    def calculate_metrics(self, state, action, reward, next_state, info, loss: Optional[float] = None) -> Dict[str, float]:
+        """Calculate all required metrics for the current step."""
+        state_tensor = torch.FloatTensor(state).unsqueeze(0).to(device)
+        q_values = self.model(state_tensor)
+        current_q = q_values[0][action].item()
+        
+        # Calculate accuracy (1 if reward is positive, 0 otherwise)
+        accuracy = 1.0 if reward > 0 else 0.0
+        
+        # Calculate MSE (Mean Squared Error)
+        mse = (reward - current_q) ** 2
+        
+        # Calculate MRE (Mean Relative Error)
+        mre = abs(reward - current_q) / (abs(reward) + 1e-6)
+        
+        # Get latency from info
+        avg_latency = info.get("latency", 0)
+        
+        metrics = {
+            "accuracy": accuracy,
+            "mse": mse,
+            "mre": mre,
+            "avg_latency": avg_latency,
+            "total_reward": reward
+        }
+        
+        if loss is not None:
+            metrics["loss"] = loss
+            
+        return metrics
+
     def train_step(self):
         if self.replay_buffer.size() < batch_size:
-            return
+            return None
 
         state, action, reward, next_state, done = \
             self.replay_buffer.sample(batch_size)
@@ -133,53 +167,77 @@ class DQNAgent:
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+        
+        return loss.item()
 
 
 # Training the DQN Agent
-def train_dqn(agent, num_episodes):
+def train_dqn(agent, num_episodes, wandb_run_id: Optional[str] = None):
     epsilon = epsilon_start
-    rewards = []
-    episode_latency = {}
-    episode_reward = {}
+    episode_metrics = {}
+    
     for episode in range(num_episodes):
-        state = env.reset()
+        state, _ = env.reset()
         total_reward = 0
+        agent.metrics_collector.reset()
+        
         for step in range(max_steps_per_episode):
             action = agent.act(state, epsilon)
-            next_state, reward, done, info = env.step(action)
+            next_state, reward, terminated, truncated, info = env.step(action)
+            done = terminated or truncated
+            
             agent.replay_buffer.push(state, action, reward, next_state, done)
+            loss = agent.train_step()
+            
+            # Calculate and collect metrics
+            step_metrics = agent.calculate_metrics(state, action, reward, next_state, info, loss)
+            agent.metrics_collector.update(step_metrics)
+            
             state = next_state
             total_reward += reward
-            agent.train_step()
+            
             if done:
                 break
 
-            episode_latency[episode] = min(
-                info["latency"], episode_latency.get(episode, 100000)
-            )
-            episode_reward[episode] = reward
-
-        rewards.append(total_reward)
+        # Update exploration rate
         epsilon = max(epsilon_end, epsilon * epsilon_decay)
 
         if episode % target_update_freq == 0:
             agent.update_target_network()
 
+        # Get average metrics for the episode
+        avg_metrics = agent.metrics_collector.get_average_metrics()
+        
+        # Store episode metrics
+        for key, value in avg_metrics.items():
+            if key not in episode_metrics:
+                episode_metrics[key] = []
+            episode_metrics[key].append(value)
+        
+        # Log to wandb if run_id is provided
+        if wandb_run_id:
+            wandb.log({
+                "episode": episode,
+                **avg_metrics,
+                "total_reward": total_reward,
+                "steps": step + 1,
+                "epsilon": epsilon
+            })
+
         print(
-            f"Episode {episode}, Total Reward: {total_reward}, "
-            f"Epsilon: {epsilon}"
+            f"Episode {episode}, Total Reward: {total_reward:.2f}, "
+            f"Epsilon: {epsilon:.3f}, "
+            f"Accuracy: {avg_metrics.get('accuracy', 0):.3f}, "
+            f"MSE: {avg_metrics.get('mse', 0):.3f}, "
+            f"MRE: {avg_metrics.get('mre', 0):.3f}, "
+            f"Avg Latency: {avg_metrics.get('avg_latency', 0):.2f}"
         )
 
     agent.model.save_model()
     agent.target_model.save_model(file_name="./dqn_target_model.pth")
     print("Training end.")
-    with open("./episode_latency.json", "w") as file:
-        json.dump(episode_latency, file, indent=4)
-
-    with open("./episode_reward.json", "w") as file:
-        json.dump(episode_reward, file, indent=4)
-
-    return rewards
+    
+    return episode_metrics
 
 
 # Initialize Environment and Agent

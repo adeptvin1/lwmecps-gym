@@ -6,6 +6,7 @@ from time import time
 import os
 import logging
 from typing import Dict, List, Tuple, Union, Optional, Any
+from collections import defaultdict
 
 import bitmath
 import gymnasium as gym
@@ -18,390 +19,225 @@ from lwmecps_gym.envs.kubernetes_api import k8s
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+class MetricsCollector:
+    def __init__(self):
+        self.metrics = defaultdict(list)
+    
+    def update(self, metrics_dict: Dict[str, float]):
+        """Update metrics with new values."""
+        for key, value in metrics_dict.items():
+            self.metrics[key].append(value)
+    
+    def get_average_metrics(self) -> Dict[str, float]:
+        """Calculate average values for all metrics."""
+        return {key: np.mean(values) for key, values in self.metrics.items() if values}
+    
+    def get_latest_metrics(self) -> Dict[str, float]:
+        """Get the most recent values for all metrics."""
+        return {key: values[-1] for key, values in self.metrics.items() if values}
+    
+    def reset(self):
+        """Reset all metrics."""
+        self.metrics.clear()
+
 class QLearningAgent:
     def __init__(
         self,
-        env,
         learning_rate: float = 0.1,
-        discount_factor: float = 0.9,
+        discount_factor: float = 0.95,
         exploration_rate: float = 1.0,
-        exploration_decay: float = 0.98,
+        exploration_decay: float = 0.995,
         min_exploration_rate: float = 0.01,
-        max_states: int = 1000,
-        wandb_run_id: Optional[str] = None,
+        max_states: int = 10000
     ):
-        """
-        Initialize Q-learning agent.
-        
-        Args:
-            env: Gymnasium environment
-            learning_rate: Learning rate for Q-value updates
-            discount_factor: Discount factor for future rewards
-            exploration_rate: Initial exploration rate (epsilon)
-            exploration_decay: Rate at which exploration rate decays
-            min_exploration_rate: Minimum exploration rate
-            max_states: Maximum number of states to store in Q-table
-            wandb_run_id: Optional Weights & Biases run ID for logging
-        """
-        self.env = env
-        # Get the original environment by unwrapping all wrappers
-        self.original_env = env
-        while hasattr(self.original_env, 'env'):
-            self.original_env = self.original_env.env
-        
         self.learning_rate = learning_rate
         self.discount_factor = discount_factor
         self.exploration_rate = exploration_rate
         self.exploration_decay = exploration_decay
         self.min_exploration_rate = min_exploration_rate
         self.max_states = max_states
-        self.wandb_run_id = wandb_run_id
-
-        # Initialize Q-table for each node and action
         self.q_table = {}
-        self.state_visits = {}  # Track state visits for cleanup
-
-        # Initialize wandb
-        if self.wandb_run_id:
-            try:
-                wandb.init(
-                    project="lwmecps-gym",
-                    id=self.wandb_run_id,
-                    config={
-                        "learning_rate": learning_rate,
-                        "discount_factor": discount_factor,
-                        "exploration_rate": exploration_rate,
-                        "exploration_decay": exploration_decay,
-                        "min_exploration_rate": min_exploration_rate,
-                        "max_states": max_states,
-                        "model_type": "q_learning",
-                    }
-                )
-                logger.info(f"Successfully initialized wandb run with ID {self.wandb_run_id}")
-            except Exception as e:
-                logger.error(f"Failed to initialize wandb: {str(e)}")
-                self.wandb_run_id = None
-
+        self.state_visits = {}
+        self.metrics_collector = MetricsCollector()
+        
     def _cleanup_q_table(self):
-        """Remove least visited states from Q-table when it exceeds max_states."""
-        if len(self.q_table) <= self.max_states:
-            return
-            
-        # Sort states by visit count
-        sorted_states = sorted(self.state_visits.items(), key=lambda x: x[1])
-        states_to_remove = len(self.q_table) - self.max_states
-        
-        # Remove least visited states
-        for state, _ in sorted_states[:states_to_remove]:
-            del self.q_table[state]
-            del self.state_visits[state]
-            
-        logger.info(f"Cleaned up Q-table, removed {states_to_remove} states")
-
-    def save_q_table(self, file_name: str) -> None:
-        """
-        Save Q-table to file.
-        
-        Args:
-            file_name: Path to save Q-table
-        """
-        try:
-            # Ensure the directory exists
-            os.makedirs(os.path.dirname(os.path.abspath(file_name)), exist_ok=True)
-            
-            # Save locally
-            with open(file_name, "wb") as f:
-                pickle.dump(self.q_table, f)
-            logger.info(f"Q-table saved to {file_name}")
-            
-            # Save to wandb if initialized
-            if self.wandb_run_id:
-                try:
-                    # Save as a wandb artifact
-                    artifact = wandb.Artifact('q_table', type='model')
-                    artifact.add_file(file_name)
-                    wandb.log_artifact(artifact)
-                    logger.info("Successfully saved model to wandb as artifact")
-                    
-                    # Also save directly
-                    wandb.save(file_name)
-                    logger.info("Successfully saved model file to wandb")
-                except Exception as e:
-                    logger.error(f"Failed to save model to wandb: {str(e)}")
-                
-        except Exception as e:
-            logger.error(f"Error saving Q-table: {str(e)}")
-            raise
-
-    def load_q_table(self, file_name: str) -> None:
-        """
-        Load Q-table from file.
-        
-        Args:
-            file_name: Path to load Q-table from
-        """
-        try:
-            with open(file_name, "rb") as f:
-                self.q_table = pickle.load(f)
+        """Remove least visited states if table size exceeds max_states."""
+        if len(self.q_table) > self.max_states:
+            sorted_states = sorted(self.state_visits.items(), key=lambda x: x[1])
+            states_to_remove = sorted_states[:len(self.q_table) - self.max_states]
+            for state, _ in states_to_remove:
+                del self.q_table[state]
+                del self.state_visits[state]
+    
+    def save_q_table(self, file_name="./q_table.json"):
+        """Save Q-table to a JSON file."""
+        with open(file_name, "w") as file:
+            json.dump(self.q_table, file, indent=4)
+        logger.info(f"Q-table saved to {file_name}")
+    
+    def load_q_table(self, file_name="./q_table.json"):
+        """Load Q-table from a JSON file."""
+        if os.path.exists(file_name):
+            with open(file_name, "r") as file:
+                self.q_table = json.load(file)
             logger.info(f"Q-table loaded from {file_name}")
-            
-            # Initialize state visits for loaded states
-            self.state_visits = {state: 0 for state in self.q_table.keys()}
-            
-        except Exception as e:
-            logger.error(f"Error loading Q-table: {str(e)}")
-            raise
-
-    def validate_state(self, state: Dict[str, Any]) -> bool:
-        """
-        Validate environment state.
-        
-        Args:
-            state: Environment state to validate
-            
-        Returns:
-            bool: True if state is valid, False otherwise
-        """
-        try:
-            if not isinstance(state, dict):
-                return False
-                
-            # Check for required top-level keys
-            if "current_node" not in state or "nodes" not in state:
-                return False
-                
-            # Check current_node
-            if not isinstance(state["current_node"], str):
-                return False
-                
-            # Check nodes structure
-            if not isinstance(state["nodes"], dict):
-                return False
-                
-            for node in self.original_env.node_name:
-                if node not in state["nodes"]:
-                    return False
-                node_state = state["nodes"][node]
-                if not isinstance(node_state, dict):
-                    return False
-                if "deployments" not in node_state or "avg_latency" not in node_state:
-                    return False
-                if not isinstance(node_state["deployments"], dict):
-                    return False
-                if not isinstance(node_state["avg_latency"], (int, float)):
-                    return False
-                    
-                # Check deployments
-                for deployment in self.original_env.deployments:
-                    if deployment not in node_state["deployments"]:
-                        return False
-                    deployment_state = node_state["deployments"][deployment]
-                    if not isinstance(deployment_state, dict):
-                        return False
-                    if "replicas" not in deployment_state:
-                        return False
-                    if not isinstance(deployment_state["replicas"], (int, float)):
-                        return False
-                        
-            return True
-        except Exception as e:
-            logger.error(f"Error validating state: {str(e)}")
-            return False
-
-    def choose_action(self, state: Dict[str, Any]) -> int:
-        """
-        Choose action based on current state.
-        
-        Args:
-            state: Current environment state
-            
-        Returns:
-            int: Chosen action
-        """
-        if not self.validate_state(state):
-            raise ValueError("Invalid state")
-            
-        node = self.get_current_node(state)
-        if node is None:
-            raise ValueError("Could not determine current node")
-            
-        if random.uniform(0, 1) < self.exploration_rate:
-            return self.original_env.action_space.sample()  # Exploration
         else:
-            if node not in self.q_table:
-                self.q_table[node] = np.zeros(self.original_env.action_space.n)
-                self.state_visits[node] = 0
-            return np.argmax(self.q_table[node])  # Exploitation
-
-    def update_q_table(self, state: Dict[str, Any], action: int, reward: float, next_state: Dict[str, Any]) -> None:
-        """
-        Update Q-table based on experience.
+            logger.info(f"No Q-table found at {file_name}")
+    
+    def _validate_state(self, state):
+        """Validate and format state for Q-table."""
+        if isinstance(state, dict):
+            # Convert dict to string representation
+            state_str = json.dumps(state, sort_keys=True)
+        else:
+            state_str = str(state)
+        return state_str
+    
+    def choose_action(self, state, valid_actions=None):
+        """Choose action using epsilon-greedy policy."""
+        state_str = self._validate_state(state)
         
-        Args:
-            state: Current state
-            action: Taken action
-            reward: Received reward
-            next_state: Next state
-        """
-        try:
-            if not self.validate_state(state) or not self.validate_state(next_state):
-                raise ValueError("Invalid state")
-                
-            node = self.get_current_node(state)
-            next_node = self.get_current_node(next_state)
-            
-            if node is None or next_node is None:
-                raise ValueError("Could not determine current or next node")
-                
-            # Initialize Q-values for new states
-            if node not in self.q_table:
-                self.q_table[node] = np.zeros(self.original_env.action_space.n)
-                self.state_visits[node] = 0
-            if next_node not in self.q_table:
-                self.q_table[next_node] = np.zeros(self.original_env.action_space.n)
-                self.state_visits[next_node] = 0
-                
-            # Update state visit count
-            self.state_visits[node] += 1
-            
-            # Cleanup if needed
-            self._cleanup_q_table()
-            
-            best_next_action = np.argmax(self.q_table[next_node])
-
-            # Update Q-value
-            q_value = self.q_table[node][action]
-            self.q_table[node][action] = q_value + self.learning_rate * (
-                reward
-                + self.discount_factor * self.q_table[next_node][best_next_action]
-                - q_value
-            )
-
-            # Log Q-value update to wandb
-            if self.wandb_run_id:
-                try:
-                    wandb.log({
-                        f"q_value/{node}/{action}": self.q_table[node][action],
-                        f"q_value_change/{node}/{action}": self.q_table[node][action] - q_value,
-                        "exploration_rate": self.exploration_rate,
-                    })
-                except Exception as e:
-                    logger.error(f"Failed to log to wandb: {str(e)}")
-                    
-        except Exception as e:
-            logger.error(f"Error updating Q-table: {str(e)}")
-            raise
-
-    def get_current_node(self, state: Dict[str, Any]) -> Optional[str]:
-        """
-        Get current node from state.
+        # Initialize state in Q-table if not present
+        if state_str not in self.q_table:
+            self.q_table[state_str] = {action: 0.0 for action in range(4)}  # Assuming 4 actions
+            self.state_visits[state_str] = 0
         
-        Args:
-            state: Environment state
-            
-        Returns:
-            Optional[str]: Current node name or None if not found
-        """
-        try:
-            if not self.validate_state(state):
-                return None
-                
+        # Update state visit count
+        self.state_visits[state_str] += 1
+        
+        # Epsilon-greedy action selection
+        if random.random() < self.exploration_rate:
+            if valid_actions:
+                action = random.choice(valid_actions)
+            else:
+                action = random.choice(list(self.q_table[state_str].keys()))
+        else:
+            if valid_actions:
+                valid_q_values = {action: self.q_table[state_str][action] for action in valid_actions}
+                action = max(valid_q_values.items(), key=lambda x: x[1])[0]
+            else:
+                action = max(self.q_table[state_str].items(), key=lambda x: x[1])[0]
+        
+        return action
+    
+    def update_q_table(self, state, action, reward, next_state, done):
+        """Update Q-table using Q-learning update rule."""
+        state_str = self._validate_state(state)
+        next_state_str = self._validate_state(next_state)
+        
+        # Initialize states in Q-table if not present
+        if state_str not in self.q_table:
+            self.q_table[state_str] = {action: 0.0 for action in range(4)}  # Assuming 4 actions
+            self.state_visits[state_str] = 0
+        if next_state_str not in self.q_table:
+            self.q_table[next_state_str] = {action: 0.0 for action in range(4)}  # Assuming 4 actions
+            self.state_visits[next_state_str] = 0
+        
+        # Q-learning update
+        current_q = self.q_table[state_str][action]
+        if done:
+            max_next_q = 0
+        else:
+            max_next_q = max(self.q_table[next_state_str].values())
+        
+        new_q = current_q + self.learning_rate * (reward + self.discount_factor * max_next_q - current_q)
+        self.q_table[state_str][action] = new_q
+        
+        # Cleanup if necessary
+        self._cleanup_q_table()
+    
+    def get_current_node(self, state):
+        """Extract current node from state."""
+        if isinstance(state, dict) and "current_node" in state:
             return state["current_node"]
-        except Exception as e:
-            logger.error(f"Error getting current node: {str(e)}")
-            return None
-
-    def train(self, episodes: int) -> Dict[str, Dict[int, Any]]:
-        """
-        Train the agent.
+        return None
+    
+    def calculate_metrics(self, state, action, reward, next_state, info) -> Dict[str, float]:
+        """Calculate all required metrics for the current step."""
+        state_str = self._validate_state(state)
+        current_q = self.q_table[state_str][action]
         
-        Args:
-            episodes: Number of episodes to train
-            
-        Returns:
-            Dict[str, Dict[int, Any]]: Training results
-        """
-        episode_latency = {}
-        episode_reward = {}
-        episode_steps = {}
-        episode_exploration = {}
+        # Calculate accuracy (1 if reward is positive, 0 otherwise)
+        accuracy = 1.0 if reward > 0 else 0.0
         
-        try:
-            for episode in range(episodes):
-                logger.info(f"\nStarting episode {episode + 1}/{episodes}")
-                state = self.env.reset()[0]  # Get only observation
-                total_reward = 0
-                steps = 0
-                
-                while True:
-                    action = self.choose_action(state)
-                    next_state, reward, done, truncated, info = self.env.step(action)
-                    self.update_q_table(state, action, reward, next_state)
-                    
-                    total_reward += reward
-                    steps += 1
-                    
-                    # Log current state and reward
-                    current_node = self.get_current_node(state)
-                    logger.info(f"Step {steps}:")
-                    logger.info(f"  Current node: {current_node}")
-                    logger.info(f"  Action: {action} (node {self.original_env.node_name[action]})")
-                    logger.info(f"  Reward: {reward}")
-                    logger.info(f"  Total reward so far: {total_reward}")
-                    
-                    if done or truncated:
-                        break
-                    
-                    state = next_state
-                
-                # Save episode metrics
-                current_node = self.get_current_node(state)
-                if current_node:
-                    episode_latency[episode] = state[current_node]["avg_latency"]
-                episode_reward[episode] = total_reward
-                episode_steps[episode] = steps
-                episode_exploration[episode] = self.exploration_rate
-                
-                # Update exploration rate
-                self.exploration_rate = max(
-                    self.min_exploration_rate,
-                    self.exploration_rate * self.exploration_decay
-                )
-                
-                # Log episode results
-                logger.info(f"\nEpisode {episode + 1} completed:")
-                logger.info(f"  Total steps: {steps}")
-                logger.info(f"  Total reward: {total_reward}")
-                if current_node:
-                    logger.info(f"  Final latency: {state[current_node]['avg_latency']}ms")
-                logger.info(f"  Exploration rate: {self.exploration_rate}")
-                
-                # Log metrics to wandb
-                if self.wandb_run_id:
-                    try:
-                        metrics = {
-                            "episode": episode,
-                            "total_reward": total_reward,
-                            "steps": steps,
-                            "epsilon": self.exploration_rate,
-                        }
-                        if current_node:
-                            metrics["latency"] = state[current_node]["avg_latency"]
-                        wandb.log(metrics)
-                        logger.info(f"Successfully logged metrics for episode {episode}")
-                    except Exception as e:
-                        logger.error(f"Failed to log metrics to wandb: {str(e)}")
+        # Calculate MSE (Mean Squared Error)
+        mse = (reward - current_q) ** 2
+        
+        # Calculate MRE (Mean Relative Error)
+        mre = abs(reward - current_q) / (abs(reward) + 1e-6)
+        
+        # Get latency from info
+        avg_latency = info.get("latency", 0)
+        
+        return {
+            "accuracy": accuracy,
+            "mse": mse,
+            "mre": mre,
+            "avg_latency": avg_latency,
+            "exploration_rate": self.exploration_rate,
+            "total_reward": reward
+        }
+    
+    def train(self, env, num_episodes: int, wandb_run_id: str = None) -> Dict[str, List[float]]:
+        """Train the agent."""
+        episode_metrics = defaultdict(list)
+        
+        for episode in range(num_episodes):
+            state, _ = env.reset()
+            total_reward = 0
+            steps = 0
+            self.metrics_collector.reset()
             
-            return {
-                "episode_latency": episode_latency,
-                "episode_reward": episode_reward,
-                "episode_steps": episode_steps,
-                "episode_exploration": episode_exploration
-            }
+            while True:
+                action = self.choose_action(state)
+                next_state, reward, terminated, truncated, info = env.step(action)
+                done = terminated or truncated
+                
+                # Calculate and collect metrics
+                step_metrics = self.calculate_metrics(state, action, reward, next_state, info)
+                self.metrics_collector.update(step_metrics)
+                
+                self.update_q_table(state, action, reward, next_state, done)
+                
+                state = next_state
+                total_reward += reward
+                steps += 1
+                
+                if done:
+                    break
             
-        except Exception as e:
-            logger.error(f"Error during training: {str(e)}")
-            raise
+            # Update exploration rate
+            self.exploration_rate = max(self.min_exploration_rate, 
+                                     self.exploration_rate * self.exploration_decay)
+            
+            # Get average metrics for the episode
+            avg_metrics = self.metrics_collector.get_average_metrics()
+            
+            # Store episode metrics
+            for key, value in avg_metrics.items():
+                episode_metrics[key].append(value)
+            
+            # Log to wandb if run_id is provided
+            if wandb_run_id:
+                wandb.log({
+                    "episode": episode,
+                    **avg_metrics,
+                    "total_reward": total_reward,
+                    "steps": steps
+                })
+            
+            logger.info(
+                f"Episode {episode + 1}/{num_episodes}, "
+                f"Total Reward: {total_reward:.2f}, "
+                f"Steps: {steps}, "
+                f"Exploration Rate: {self.exploration_rate:.3f}, "
+                f"Accuracy: {avg_metrics['accuracy']:.3f}, "
+                f"MSE: {avg_metrics['mse']:.3f}, "
+                f"MRE: {avg_metrics['mre']:.3f}, "
+                f"Avg Latency: {avg_metrics['avg_latency']:.2f}"
+            )
+        
+        return dict(episode_metrics)
 
 
 if __name__ == "__main__":
@@ -465,8 +301,8 @@ if __name__ == "__main__":
     )
 
     # Создаем и обучаем агента
-    agent = QLearningAgent(env)
+    agent = QLearningAgent()
     start = time()
-    agent.train(episodes=100)
+    agent.train(env, num_episodes=100)
     print(f"Training time: {(time() - start)}")
-    agent.save_q_table("./q_table.pkl")
+    agent.save_q_table("./q_table.json")

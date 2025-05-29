@@ -4,7 +4,8 @@ import torch.optim as optim
 import numpy as np
 from gymnasium import spaces
 import logging
-from typing import List, Dict, Union, Tuple
+from typing import List, Dict, Union, Tuple, Optional
+import wandb
 
 from lwmecps_gym.envs import LWMECPSEnv
 
@@ -145,6 +146,30 @@ class RolloutBuffer:
             self.returns[t] = self.advantages[t] + self.values[t]
 
 
+class MetricsCollector:
+    def __init__(self):
+        self.metrics = {}
+    
+    def update(self, metrics_dict: Dict[str, float]):
+        """Update metrics with new values."""
+        for key, value in metrics_dict.items():
+            if key not in self.metrics:
+                self.metrics[key] = []
+            self.metrics[key].append(value)
+    
+    def get_average_metrics(self) -> Dict[str, float]:
+        """Calculate average values for all metrics."""
+        return {key: np.mean(values) for key, values in self.metrics.items() if values}
+    
+    def get_latest_metrics(self) -> Dict[str, float]:
+        """Get the most recent values for all metrics."""
+        return {key: values[-1] for key, values in self.metrics.items() if values}
+    
+    def reset(self):
+        """Reset all metrics."""
+        self.metrics.clear()
+
+
 class PPO:
     """
     Реализация алгоритма Proximal Policy Optimization.
@@ -195,6 +220,7 @@ class PPO:
         self.n_epochs = n_epochs
         self.device = device
         self.deployments = deployments or []
+        self.metrics_collector = MetricsCollector()
 
         # Инициализация модели и оптимизатора
         self.model = ActorCritic(obs_dim, act_dim, hidden_size).to(device)
@@ -298,125 +324,165 @@ class PPO:
             logger.error(f"Error in collect_trajectories: {str(e)}")
             raise
 
+    def calculate_metrics(self, state, action, reward, value, log_prob, info, actor_loss: Optional[float] = None, critic_loss: Optional[float] = None) -> Dict[str, float]:
+        """Calculate all required metrics for the current step."""
+        # Calculate accuracy (1 if reward is positive, 0 otherwise)
+        accuracy = 1.0 if reward > 0 else 0.0
+        
+        # Calculate MSE (Mean Squared Error) between reward and value
+        mse = (reward - value) ** 2
+        
+        # Calculate MRE (Mean Relative Error)
+        mre = abs(reward - value) / (abs(reward) + 1e-6)
+        
+        # Get latency from info
+        avg_latency = info.get("latency", 0)
+        
+        metrics = {
+            "accuracy": accuracy,
+            "mse": mse,
+            "mre": mre,
+            "avg_latency": avg_latency,
+            "total_reward": reward,
+            "value": value,
+            "log_prob": log_prob
+        }
+        
+        if actor_loss is not None:
+            metrics["actor_loss"] = actor_loss
+        if critic_loss is not None:
+            metrics["critic_loss"] = critic_loss
+            
+        return metrics
+
     def update(self) -> Dict[str, float]:
-        """
-        Обновление политики на основе собранных траекторий.
+        """Обновление политики на основе собранных данных."""
+        # Вычисление преимуществ
+        self.buffer.compute_advantages(self.gamma, self.lam)
         
-        Returns:
-            Dict[str, float]: Метрики обучения (потери актера, критика, общие потери)
-        """
-        try:
-            # Преобразование данных в тензоры
-            states = torch.FloatTensor(self.buffer.states).to(self.device)
-            actions = torch.LongTensor(self.buffer.actions).to(self.device)
-            old_log_probs = torch.FloatTensor(self.buffer.log_probs).to(self.device)
-            advantages = torch.FloatTensor(self.buffer.advantages).to(self.device)
-            returns = torch.FloatTensor(self.buffer.returns).to(self.device)
+        # Подготовка данных для обновления
+        states = torch.FloatTensor(self.buffer.states).to(self.device)
+        actions = torch.LongTensor(self.buffer.actions).to(self.device)
+        old_values = torch.FloatTensor(self.buffer.values).to(self.device)
+        old_log_probs = torch.FloatTensor(self.buffer.log_probs).to(self.device)
+        advantages = torch.FloatTensor(self.buffer.advantages).to(self.device)
+        returns = torch.FloatTensor(self.buffer.returns).to(self.device)
+        
+        # Нормализация преимуществ
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        
+        total_actor_loss = 0
+        total_critic_loss = 0
+        total_entropy = 0
+        
+        # Обновление в течение нескольких эпох
+        for _ in range(self.n_epochs):
+            # Создание батчей
+            indices = np.random.permutation(self.n_steps)
+            for start_idx in range(0, self.n_steps, self.batch_size):
+                idx = indices[start_idx:start_idx + self.batch_size]
+                
+                # Получение новых значений
+                action_probs, values = self.model(states[idx])
+                dist = torch.distributions.Categorical(action_probs)
+                new_log_probs = dist.log_prob(actions[idx])
+                entropy = dist.entropy().mean()
+                
+                # Вычисление отношения вероятностей
+                ratio = torch.exp(new_log_probs - old_log_probs[idx])
+                
+                # PPO loss
+                surr1 = ratio * advantages[idx]
+                surr2 = torch.clamp(ratio, 1 - self.clip_eps, 1 + self.clip_eps) * advantages[idx]
+                actor_loss = -torch.min(surr1, surr2).mean()
+                
+                # Value loss
+                critic_loss = 0.5 * (returns[idx] - values.squeeze()).pow(2).mean()
+                
+                # Общий loss
+                loss = actor_loss + self.vf_coef * critic_loss - self.ent_coef * entropy
+                
+                # Обновление параметров
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
+                
+                # Сбор метрик
+                step_metrics = self.calculate_metrics(
+                    states[idx].cpu().numpy(),
+                    actions[idx].cpu().numpy(),
+                    self.buffer.rewards[idx],
+                    values.squeeze().detach().cpu().numpy(),
+                    new_log_probs.detach().cpu().numpy(),
+                    {"latency": self.buffer.rewards[idx].mean()},
+                    actor_loss.item(),
+                    critic_loss.item()
+                )
+                self.metrics_collector.update(step_metrics)
+                
+                total_actor_loss += actor_loss.item()
+                total_critic_loss += critic_loss.item()
+                total_entropy += entropy.item()
+        
+        # Сброс буфера
+        self.buffer.reset()
+        
+        # Возврат средних значений loss
+        return {
+            "actor_loss": total_actor_loss / (self.n_epochs * (self.n_steps // self.batch_size)),
+            "critic_loss": total_critic_loss / (self.n_epochs * (self.n_steps // self.batch_size)),
+            "entropy": total_entropy / (self.n_epochs * (self.n_steps // self.batch_size))
+        }
 
-            # Нормализация преимуществ
-            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-
+    def train(self, env, total_timesteps: int, wandb_run_id: Optional[str] = None) -> Dict[str, List[float]]:
+        """Обучение агента."""
+        timesteps_so_far = 0
+        episode_metrics = {}
+        
+        while timesteps_so_far < total_timesteps:
+            # Сбор траекторий
+            episode_reward, episode_length = self.collect_trajectories(env)
+            timesteps_so_far += episode_length
+            
             # Обновление политики
-            for _ in range(self.n_epochs):
-                # Перемешивание данных
-                indices = torch.randperm(len(states))
-                for start in range(0, len(states), self.batch_size):
-                    idx = indices[start:start + self.batch_size]
-                    
-                    # Получение новых значений
-                    action_probs, values = self.model(states[idx])
-                    dist = torch.distributions.Categorical(action_probs)
-                    new_log_probs = dist.log_prob(actions[idx])
-                    
-                    # Вычисление отношения вероятностей
-                    ratio = torch.exp(new_log_probs - old_log_probs[idx])
-                    
-                    # Вычисление потерь
-                    surr1 = ratio * advantages[idx]
-                    surr2 = torch.clamp(ratio, 1 - self.clip_eps, 1 + self.clip_eps) * advantages[idx]
-                    actor_loss = -torch.min(surr1, surr2).mean()
-                    
-                    # Потери критика
-                    critic_loss = 0.5 * (values.squeeze() - returns[idx]).pow(2).mean()
-                    
-                    # Энтропия для исследования
-                    entropy = dist.entropy().mean()
-                    
-                    # Общие потери
-                    loss = actor_loss + self.vf_coef * critic_loss - self.ent_coef * entropy
-                    
-                    # Оптимизация
-                    self.optimizer.zero_grad()
-                    loss.backward()
-                    self.optimizer.step()
-
-            return {
-                "actor_loss": actor_loss.item(),
-                "critic_loss": critic_loss.item(),
-                "total_loss": loss.item(),
-                "entropy": entropy.item()
-            }
-        except Exception as e:
-            logger.error(f"Error in update: {str(e)}")
-            raise
-
-    def train(self, env, total_timesteps: int) -> Dict[str, List[float]]:
-        """
-        Основной цикл обучения.
+            update_metrics = self.update()
+            
+            # Получение средних метрик
+            avg_metrics = self.metrics_collector.get_average_metrics()
+            
+            # Объединение всех метрик
+            all_metrics = {**avg_metrics, **update_metrics}
+            
+            # Сохранение метрик
+            for key, value in all_metrics.items():
+                if key not in episode_metrics:
+                    episode_metrics[key] = []
+                episode_metrics[key].append(value)
+            
+            # Логирование в wandb
+            if wandb_run_id:
+                wandb.log({
+                    "timesteps": timesteps_so_far,
+                    "episode_reward": episode_reward,
+                    "episode_length": episode_length,
+                    **all_metrics
+                })
+            
+            # Вывод информации
+            logger.info(
+                f"Timesteps: {timesteps_so_far}/{total_timesteps}, "
+                f"Episode Reward: {episode_reward:.2f}, "
+                f"Episode Length: {episode_length}, "
+                f"Actor Loss: {update_metrics['actor_loss']:.3f}, "
+                f"Critic Loss: {update_metrics['critic_loss']:.3f}, "
+                f"Entropy: {update_metrics['entropy']:.3f}, "
+                f"Accuracy: {avg_metrics.get('accuracy', 0):.3f}, "
+                f"MSE: {avg_metrics.get('mse', 0):.3f}, "
+                f"MRE: {avg_metrics.get('mre', 0):.3f}, "
+                f"Avg Latency: {avg_metrics.get('avg_latency', 0):.2f}"
+            )
         
-        Args:
-            env: Среда для взаимодействия
-            total_timesteps (int): Общее количество шагов для обучения
-            
-        Returns:
-            Dict[str, List[float]]: Метрики обучения
-        """
-        try:
-            metrics = {
-                "episode_rewards": [],
-                "episode_lengths": [],
-                "actor_losses": [],
-                "critic_losses": [],
-                "total_losses": [],
-                "entropies": [],
-                "mean_rewards": [],
-                "mean_lengths": []
-            }
-            
-            num_episodes = total_timesteps // self.n_steps
-            for episode in range(num_episodes):
-                # Сбор траекторий
-                episode_reward, episode_length = self.collect_trajectories(env)
-                
-                # Обновление политики
-                update_metrics = self.update()
-                
-                # Сохранение метрик
-                metrics["episode_rewards"].append(episode_reward)
-                metrics["episode_lengths"].append(episode_length)
-                metrics["actor_losses"].append(update_metrics["actor_loss"])
-                metrics["critic_losses"].append(update_metrics["critic_loss"])
-                metrics["total_losses"].append(update_metrics["total_loss"])
-                metrics["entropies"].append(update_metrics["entropy"])
-                
-                # Вычисление средних значений
-                metrics["mean_rewards"].append(np.mean(metrics["episode_rewards"][-100:]))
-                metrics["mean_lengths"].append(np.mean(metrics["episode_lengths"][-100:]))
-                
-                # Логирование
-                logger.info(f"Episode {episode + 1}/{num_episodes}")
-                logger.info(f"Reward: {episode_reward:.2f}, Length: {episode_length}")
-                logger.info(f"Mean Reward (last 100): {metrics['mean_rewards'][-1]:.2f}")
-                logger.info(f"Mean Length (last 100): {metrics['mean_lengths'][-1]:.2f}")
-                logger.info(f"Actor Loss: {update_metrics['actor_loss']:.4f}")
-                logger.info(f"Critic Loss: {update_metrics['critic_loss']:.4f}")
-                logger.info(f"Total Loss: {update_metrics['total_loss']:.4f}")
-                logger.info(f"Entropy: {update_metrics['entropy']:.4f}")
-                
-            return metrics
-        except Exception as e:
-            logger.error(f"Error in train: {str(e)}")
-            raise
+        return episode_metrics
 
     def save_model(self, path: str):
         """
@@ -517,7 +583,7 @@ def main():
 
     # Запускаем обучение на 10 итераций
     print("Starting PPO training for 10 iterations...")
-    ppo_agent.train(env, total_timesteps=20480)  # 2048 * 10 = 20480 timesteps
+    ppo_agent.train(env, total_timesteps=20480, wandb_run_id="ppo_training")  # 2048 * 10 = 20480 timesteps
 
     # Тестируем обученную модель
     print("\nTesting trained model...")

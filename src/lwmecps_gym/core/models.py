@@ -18,6 +18,8 @@ class ModelType(str, Enum):
     DQN = "dqn"
     Q_LEARNING = "q_learning"
     PPO = "ppo"
+    TD3 = "td3"
+    SAC = "sac"
     # Add more model types as needed
 
 class TrainingState(str, Enum):
