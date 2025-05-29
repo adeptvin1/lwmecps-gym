@@ -248,29 +248,35 @@ class TrainingService:
             logger.info(f"Final node_info: {node_info}")
 
             # Create environment
-            logger.info("Creating environment...")
-            try:
-                env = gym.make(
-                    "lwmecps-v3",
-                    node_name=list(node_info.keys()),  # Use only valid nodes
-                    max_hardware=max_hardware,
-                    pod_usage=pod_usage,
-                    node_info=node_info,
-                    num_nodes=len(node_info),  # Use actual number of valid nodes
-                    namespace="default",
-                    deployment_name="mec-test-app",
-                    deployments=["mec-test-app"],
-                    max_pods=10000,
-                    group_id=task.group_id,
-                )
-                logger.info("Environment created successfully")
-            except Exception as e:
-                logger.error(f"Failed to create environment: {str(e)}")
-                raise
+            logger.info("Creating environment")
+            env = gym.make(
+                "lwmecps-v3",
+                node_name=list(node_info.keys()),  # Convert to list
+                max_hardware=max_hardware,
+                pod_usage=pod_usage,
+                node_info=node_info,
+                num_nodes=len(node_info),  # Use actual number of nodes
+                namespace=task.namespace,
+                deployment_name=task.deployment_name,
+                deployments=[task.deployment_name],
+                max_pods=task.max_pods,
+                group_id=str(task.group_id),
+                env_config={
+                    "base_url": task.base_url,
+                    "stabilization_time": task.stabilization_time
+                }
+            )
+            logger.info("Environment created successfully")
 
             # Get observation and action dimensions
             try:
-                obs_dim = env.observation_space.shape[0]
+                # For LWMECPSEnv3, we need to calculate observation dimension manually
+                # since it uses Dict space
+                obs_dim = 0
+                for node in node_info:
+                    # Add dimensions for each node's metrics
+                    obs_dim += 6  # cpu, ram, tx_bandwidth, rx_bandwidth, read_disks_bandwidth, write_disks_bandwidth
+                    obs_dim += len([task.deployment_name])  # replicas for each deployment
                 act_dim = env.action_space.n
                 logger.info(f"Observation dimension: {obs_dim}, Action dimension: {act_dim}")
             except Exception as e:
