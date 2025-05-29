@@ -245,26 +245,40 @@ class TrainingService:
             if not node_info:
                 raise Exception("No valid nodes could be processed")
 
+            logger.info(f"Final node_info: {node_info}")
+
             # Create environment
-            env = gym.make(
-                "lwmecps-v3",
-                node_name=node_name,
-                max_hardware=max_hardware,
-                pod_usage=pod_usage,
-                node_info=node_info,
-                num_nodes=len(node_name),
-                namespace="default",
-                deployment_name="mec-test-app",
-                deployments=["mec-test-app"],
-                max_pods=10000,
-                group_id=task.group_id,
-            )
+            logger.info("Creating environment...")
+            try:
+                env = gym.make(
+                    "lwmecps-v3",
+                    node_name=list(node_info.keys()),  # Use only valid nodes
+                    max_hardware=max_hardware,
+                    pod_usage=pod_usage,
+                    node_info=node_info,
+                    num_nodes=len(node_info),  # Use actual number of valid nodes
+                    namespace="default",
+                    deployment_name="mec-test-app",
+                    deployments=["mec-test-app"],
+                    max_pods=10000,
+                    group_id=task.group_id,
+                )
+                logger.info("Environment created successfully")
+            except Exception as e:
+                logger.error(f"Failed to create environment: {str(e)}")
+                raise
 
             # Get observation and action dimensions
-            obs_dim = env.observation_space.shape[0]
-            act_dim = env.action_space.n
+            try:
+                obs_dim = env.observation_space.shape[0]
+                act_dim = env.action_space.n
+                logger.info(f"Observation dimension: {obs_dim}, Action dimension: {act_dim}")
+            except Exception as e:
+                logger.error(f"Failed to get environment dimensions: {str(e)}")
+                raise
 
             # Initialize appropriate agent based on model type
+            logger.info(f"Initializing agent of type {task.model_type}")
             if task.model_type == ModelType.Q_LEARNING:
                 agent = QLearningAgent(
                     env,
