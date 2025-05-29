@@ -38,8 +38,8 @@ class LWMECPSEnv3(gym.Env):
         self.deployments = deployments
         self.max_pods = max_pods
         self.group_id = group_id
-        self.base_url = env_config.get("base_url", base_url) if env_config else base_url
-        self.stabilization_time = int(env_config.get("stabilization_time", stabilization_time)) if env_config else stabilization_time
+        self.base_url = base_url  # Use base_url directly
+        self.stabilization_time = stabilization_time  # Use stabilization_time directly
         
         # Initialize Kubernetes client
         self.minikube = k8s()
