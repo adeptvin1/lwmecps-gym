@@ -2,23 +2,75 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from typing import Dict, Any, Tuple, List, Optional
+from typing import Dict, Any, Tuple, List, Optional, Union
 import wandb
+import logging
+
+logger = logging.getLogger(__name__)
+
+class MetricsCollector:
+    def __init__(self):
+        self.metrics = {}
+        self.metric_validators = {
+            "accuracy": lambda x: 0 <= x <= 1,
+            "mse": lambda x: x >= 0,
+            "mre": lambda x: x >= 0,
+            "avg_latency": lambda x: x >= 0,
+            "total_reward": lambda x: True,  # Can be negative
+            "q_value": lambda x: True,  # Can be negative
+            "actor_loss": lambda x: x >= 0,
+            "critic_loss": lambda x: x >= 0
+        }
+    
+    def update(self, metrics_dict: Dict[str, float]):
+        """Update metrics with new values."""
+        for key, value in metrics_dict.items():
+            if key not in self.metrics:
+                self.metrics[key] = []
+            if key in self.metric_validators:
+                if not self.metric_validators[key](value):
+                    logger.warning(f"Invalid value for metric {key}: {value}")
+                    continue
+            self.metrics[key].append(value)
+    
+    def get_average_metrics(self) -> Dict[str, float]:
+        """Calculate average values for all metrics."""
+        return {key: np.mean(values) for key, values in self.metrics.items() if values}
+    
+    def get_latest_metrics(self) -> Dict[str, float]:
+        """Get the most recent values for all metrics."""
+        return {key: values[-1] for key, values in self.metrics.items() if values}
+    
+    def reset(self):
+        """Reset all metrics."""
+        self.metrics.clear()
 
 class Actor(nn.Module):
-    def __init__(self, obs_dim: int, act_dim: int, hidden_size: int = 256):
+    def __init__(self, obs_dim: int, act_dim: int, hidden_size: int = 256, max_replicas: int = 10):
         super().__init__()
+        self.act_dim = act_dim
+        self.max_replicas = max_replicas
+        
+        # Validate dimensions
+        if act_dim <= 0:
+            raise ValueError(f"act_dim must be positive, got {act_dim}")
+        if max_replicas <= 0:
+            raise ValueError(f"max_replicas must be positive, got {max_replicas}")
+            
         self.net = nn.Sequential(
             nn.Linear(obs_dim, hidden_size),
             nn.ReLU(),
             nn.Linear(hidden_size, hidden_size),
             nn.ReLU(),
-            nn.Linear(hidden_size, act_dim),
-            nn.Tanh()
+            nn.Linear(hidden_size, act_dim * (max_replicas + 1))
         )
     
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
-        return self.net(obs)
+        x = self.net(obs)
+        # Reshape to [batch_size, act_dim, max_replicas + 1]
+        x = x.view(-1, self.act_dim, self.max_replicas + 1)
+        # Convert to discrete actions
+        return torch.argmax(x, dim=-1)
 
 class Critic(nn.Module):
     def __init__(self, obs_dim: int, act_dim: int, hidden_size: int = 256):
@@ -34,29 +86,6 @@ class Critic(nn.Module):
     def forward(self, obs: torch.Tensor, act: torch.Tensor) -> torch.Tensor:
         return self.net(torch.cat([obs, act], dim=1))
 
-class MetricsCollector:
-    def __init__(self):
-        self.metrics = {}
-    
-    def update(self, metrics_dict: Dict[str, float]):
-        """Update metrics with new values."""
-        for key, value in metrics_dict.items():
-            if key not in self.metrics:
-                self.metrics[key] = []
-            self.metrics[key].append(value)
-    
-    def get_average_metrics(self) -> Dict[str, float]:
-        """Calculate average values for all metrics."""
-        return {key: np.mean(values) for key, values in self.metrics.items() if values}
-    
-    def get_latest_metrics(self) -> Dict[str, float]:
-        """Get the most recent values for all metrics."""
-        return {key: values[-1] for key, values in self.metrics.items() if values}
-    
-    def reset(self):
-        """Reset all metrics."""
-        self.metrics.clear()
-
 class TD3:
     def __init__(
         self,
@@ -71,7 +100,8 @@ class TD3:
         noise: float = 0.2,
         batch_size: int = 256,
         device: str = "cpu",
-        deployments: List[str] = None
+        deployments: List[str] = None,
+        max_replicas: int = 10
     ):
         self.device = torch.device(device)
         self.act_dim = act_dim
@@ -82,11 +112,12 @@ class TD3:
         self.noise = noise
         self.batch_size = batch_size
         self.deployments = deployments or ["mec-test-app"]
+        self.max_replicas = max_replicas
         self.metrics_collector = MetricsCollector()
         
         # Initialize networks
-        self.actor = Actor(obs_dim, act_dim, hidden_size).to(self.device)
-        self.actor_target = Actor(obs_dim, act_dim, hidden_size).to(self.device)
+        self.actor = Actor(obs_dim, act_dim, hidden_size, max_replicas).to(self.device)
+        self.actor_target = Actor(obs_dim, act_dim, hidden_size, max_replicas).to(self.device)
         self.actor_target.load_state_dict(self.actor.state_dict())
         
         self.critic1 = Critic(obs_dim, act_dim, hidden_size).to(self.device)
@@ -114,18 +145,64 @@ class TD3:
         self.mean_rewards = []
         self.mean_lengths = []
     
-    def select_action(self, obs: np.ndarray, explore: bool = True) -> np.ndarray:
+    def _flatten_observation(self, obs):
+        """Flatten observation into a 1D vector."""
+        if isinstance(obs, np.ndarray):
+            return obs
+            
+        # Sort nodes for stable order
+        sorted_nodes = sorted(obs["nodes"].keys())
+        
+        # Create observation vector
+        obs_vector = []
+        for node in sorted_nodes:
+            node_obs = obs["nodes"][node]
+            # Add node metrics
+            obs_vector.extend([
+                node_obs["CPU"],
+                node_obs["RAM"],
+                node_obs["TX"],
+                node_obs["RX"]
+            ])
+            
+            # Add deployment metrics
+            for deployment in self.deployments:
+                dep_obs = node_obs["deployments"][deployment]
+                obs_vector.extend([
+                    dep_obs["CPU_usage"],
+                    dep_obs["RAM_usage"],
+                    dep_obs["TX_usage"],
+                    dep_obs["RX_usage"],
+                    dep_obs["Replicas"]
+                ])
+            
+            # Add latency
+            obs_vector.append(node_obs["avg_latency"])
+        
+        return np.array(obs_vector, dtype=np.float32)
+    
+    def select_action(self, obs: Union[np.ndarray, Dict], explore: bool = True) -> np.ndarray:
         with torch.no_grad():
+            obs = self._flatten_observation(obs)
             obs_tensor = torch.FloatTensor(obs).unsqueeze(0).to(self.device)
             action = self.actor(obs_tensor).cpu().numpy()[0]
+            
             if explore:
-                action = action + np.random.normal(0, self.noise, size=self.act_dim)
-                action = np.clip(action, -1, 1)
+                # Add noise to discrete actions
+                noise = np.random.randint(-1, 2, size=self.act_dim)
+                action = np.clip(action + noise, 0, self.max_replicas)
+            
+            # Validate action values
+            if not np.all((action >= 0) & (action <= self.max_replicas)):
+                logger.warning(f"Invalid action values detected: {action}. Clipping to valid range [0, {self.max_replicas}]")
+                action = np.clip(action, 0, self.max_replicas)
+            
             return action
     
     def calculate_metrics(self, obs, action, reward, next_obs, info, actor_loss: Optional[float] = None, critic_loss: Optional[float] = None) -> Dict[str, float]:
         """Calculate all required metrics for the current step."""
         with torch.no_grad():
+            obs = self._flatten_observation(obs)
             obs_tensor = torch.FloatTensor(obs).unsqueeze(0).to(self.device)
             action_tensor = torch.FloatTensor(action).unsqueeze(0).to(self.device)
             
@@ -175,21 +252,21 @@ class TD3:
         
         # Sample from replay buffer
         indices = np.random.choice(len(self.replay_buffer), batch_size, replace=False)
-        obs_batch = torch.FloatTensor([self.replay_buffer[i][0] for i in indices]).to(self.device)
+        obs_batch = torch.FloatTensor([self._flatten_observation(self.replay_buffer[i][0]) for i in indices]).to(self.device)
         act_batch = torch.FloatTensor([self.replay_buffer[i][1] for i in indices]).to(self.device)
         rew_batch = torch.FloatTensor([self.replay_buffer[i][2] for i in indices]).to(self.device)
-        next_obs_batch = torch.FloatTensor([self.replay_buffer[i][3] for i in indices]).to(self.device)
+        next_obs_batch = torch.FloatTensor([self._flatten_observation(self.replay_buffer[i][3]) for i in indices]).to(self.device)
         done_batch = torch.FloatTensor([self.replay_buffer[i][4] for i in indices]).to(self.device)
         
         # Update critics
         with torch.no_grad():
-            noise = torch.randn_like(act_batch) * self.noise
-            noise = torch.clamp(noise, -self.noise_clip, self.noise_clip)
-            next_actions = self.actor_target(next_obs_batch) + noise
-            next_actions = torch.clamp(next_actions, -1, 1)
+            # Add noise to target actions
+            noise = torch.randint(-1, 2, size=(batch_size, self.act_dim), device=self.device)
+            next_actions = self.actor_target(next_obs_batch)
+            next_actions = torch.clamp(next_actions + noise, 0, self.max_replicas)
             
-            target_q1 = self.critic1_target(next_obs_batch, next_actions)
-            target_q2 = self.critic2_target(next_obs_batch, next_actions)
+            target_q1 = self.critic1_target(next_obs_batch, next_actions.float())
+            target_q2 = self.critic2_target(next_obs_batch, next_actions.float())
             target_q = torch.min(target_q1, target_q2)
             target_q = rew_batch + (1 - done_batch) * self.gamma * target_q
         
@@ -210,7 +287,7 @@ class TD3:
         actor_loss = 0.0
         if len(self.replay_buffer) % self.policy_delay == 0:
             # Update actor
-            actor_loss = -self.critic1(obs_batch, self.actor(obs_batch)).mean()
+            actor_loss = -self.critic1(obs_batch, self.actor(obs_batch).float()).mean()
             
             self.actor_optimizer.zero_grad()
             actor_loss.backward()
@@ -231,10 +308,10 @@ class TD3:
         # Calculate and collect metrics for each sample in the batch
         for i in range(batch_size):
             step_metrics = self.calculate_metrics(
-                obs_batch[i].cpu().numpy(),
+                self.replay_buffer[indices[i]][0],
                 act_batch[i].cpu().numpy(),
                 rew_batch[i].item(),
-                next_obs_batch[i].cpu().numpy(),
+                self.replay_buffer[indices[i]][3],
                 {"latency": rew_batch[i].item()},
                 actor_loss.item() if actor_loss != 0.0 else None,
                 (critic1_loss.item() + critic2_loss.item()) / 2
@@ -252,6 +329,26 @@ class TD3:
         episode_reward = 0
         episode_length = 0
         episode_metrics = {}
+        
+        # Initialize wandb if run_id is provided
+        if wandb_run_id:
+            wandb.init(
+                id=wandb_run_id,
+                project="lwmecps-gym",
+                config={
+                    "algorithm": "TD3",
+                    "total_timesteps": total_timesteps,
+                    "hidden_size": self.actor.net[0].out_features,
+                    "learning_rate": self.actor_optimizer.param_groups[0]['lr'],
+                    "gamma": self.gamma,
+                    "tau": self.tau,
+                    "policy_delay": self.policy_delay,
+                    "noise_clip": self.noise_clip,
+                    "noise": self.noise,
+                    "batch_size": self.batch_size,
+                    "max_replicas": self.max_replicas
+                }
+            )
         
         for t in range(total_timesteps):
             action = self.select_action(obs)
@@ -289,7 +386,14 @@ class TD3:
                         "timesteps": t,
                         "episode_reward": episode_reward,
                         "episode_length": episode_length,
-                        **all_metrics
+                        "metrics/accuracy": avg_metrics.get('accuracy', 0),
+                        "metrics/mse": avg_metrics.get('mse', 0),
+                        "metrics/mre": avg_metrics.get('mre', 0),
+                        "metrics/avg_latency": avg_metrics.get('avg_latency', 0),
+                        "metrics/q_value": avg_metrics.get('q_value', 0),
+                        "losses/actor_loss": update_metrics['actor_loss'],
+                        "losses/critic_loss": update_metrics['critic_loss'],
+                        "losses/total_loss": update_metrics['total_loss']
                     })
                 
                 # Print episode summary
@@ -310,6 +414,10 @@ class TD3:
                 episode_reward = 0
                 episode_length = 0
                 self.metrics_collector.reset()
+        
+        # Close wandb run
+        if wandb_run_id:
+            wandb.finish()
         
         return episode_metrics
     
