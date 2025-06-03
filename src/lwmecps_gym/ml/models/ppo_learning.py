@@ -33,8 +33,7 @@ class ActorCritic(nn.Module):
             nn.Tanh(),
             nn.Linear(hidden_size, hidden_size),
             nn.Tanh(),
-            nn.Linear(hidden_size, act_dim),
-            nn.Sigmoid()  # Output between 0 and 1
+            nn.Linear(hidden_size, act_dim * (max_replicas + 1))  # Output logits for each action
         )
 
         # Critic (Value function) - estimates expected reward
@@ -54,11 +53,11 @@ class ActorCritic(nn.Module):
             x (torch.Tensor): Input state tensor
             
         Returns:
-            Tuple[torch.Tensor, torch.Tensor]: (action distribution, value estimate)
+            Tuple[torch.Tensor, torch.Tensor]: (action logits, value estimate)
         """
-        action_probs = self.actor(x)
+        logits = self.actor(x)
         value = self.critic(x)
-        return action_probs, value
+        return logits, value
 
     def get_action_and_value(self, x):
         """
@@ -71,21 +70,15 @@ class ActorCritic(nn.Module):
             Tuple[torch.Tensor, torch.Tensor, torch.distributions.Distribution, torch.Tensor]:
                 (action, log_prob, distribution, value estimate)
         """
-        action_probs, value = self(x)
-        # Scale action probabilities to [0, max_replicas]
-        action_probs = action_probs * self.max_replicas
-        # Use uniform distribution for exploration
-        dist = torch.distributions.Uniform(
-            low=torch.zeros_like(action_probs),
-            high=torch.ones_like(action_probs) * self.max_replicas
-        )
+        logits, value = self(x)
+        # Reshape logits to [batch_size, num_deployments, num_actions]
+        logits = logits.view(-1, self.act_dim, self.max_replicas + 1)
+        # Create categorical distribution for each deployment
+        dist = torch.distributions.Categorical(logits=logits)
+        # Sample actions
         action = dist.sample()
-        # Round to nearest integer
-        action = torch.round(action).to(torch.int32)
-        # Ensure in range [0, max_replicas]
-        action = torch.clamp(action, 0, self.max_replicas)
-        action_float = action.float()
-        log_prob = dist.log_prob(action_float).sum(dim=-1)
+        # Calculate log probability
+        log_prob = dist.log_prob(action).sum(dim=-1)
         return action, log_prob, dist, value
 
 
@@ -403,8 +396,8 @@ class PPO:
                 idx = indices[start_idx:start_idx + self.batch_size]
                 
                 # Get new values
-                action_probs, values = self.model(states[idx])
-                dist = torch.distributions.Normal(action_probs, 1.0)
+                logits, values = self.model(states[idx])
+                dist = torch.distributions.Categorical(logits=logits)
                 new_log_probs = dist.log_prob(actions[idx]).sum(dim=-1)
                 entropy = dist.entropy().mean()
                 

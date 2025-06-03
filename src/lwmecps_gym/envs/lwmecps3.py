@@ -49,11 +49,8 @@ class LWMECPSEnv3(gym.Env):
         self.stabilization_time = int(env_config.get("stabilization_time", stabilization_time)) if env_config else stabilization_time
         self.minikube = k8s()
         self.max_replicas = int(self.max_hardware["cpu"] / self.pod_usage["cpu"])
-        self.action_space = gym.spaces.Box(
-            low=0,
-            high=self.max_replicas,
-            shape=(len(deployments),),
-            dtype=np.int32
+        self.action_space = gym.spaces.MultiDiscrete(
+            [self.max_replicas + 1] * len(deployments)
         )
         self.observation_space = gym.spaces.Dict({
             "nodes": gym.spaces.Dict({
