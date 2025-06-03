@@ -75,7 +75,7 @@ class ActorCritic(nn.Module):
         # Scale action probabilities to max_replicas
         action_probs = action_probs * self.max_replicas
         # Create normal distribution with mean from actor and fixed std
-        dist = torch.distributions.Normal(action_probs, 1.0)
+        dist = torch.distributions.Normal(action_probs, 0.1)  # Reduced std for more stable actions
         action = dist.sample()
         # Clip action to valid range and round to integers
         action = torch.clamp(action, 0, self.max_replicas)
@@ -582,6 +582,9 @@ def main():
 
     act_dim = env.action_space.shape[0]  # 3 actions: scale down, no change, scale up
 
+    # Calculate max_replicas based on CPU capacity
+    max_replicas = int(env.max_hardware["cpu"] / env.pod_usage["cpu"])  # Maximum replicas that fit on a node
+
     # Create PPO agent
     ppo_agent = PPO(
         obs_dim=obs_dim,
@@ -598,7 +601,7 @@ def main():
         n_epochs=10,
         device="cpu",
         deployments=env.deployments,
-        max_replicas=10
+        max_replicas=max_replicas
     )
 
     # Start training for 10 iterations
