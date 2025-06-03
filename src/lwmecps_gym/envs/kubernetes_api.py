@@ -163,7 +163,7 @@ class k8s:
             logger.error(f"Failed to get Kubernetes state: {str(e)}")
             raise
 
-    def k8s_action(self, namespace: str, deployment_name: str, replicas: int, node: str) -> None:
+    def k8s_action(self, namespace: str, deployment_name: str, replicas: int) -> None:
         """
         Perform Kubernetes action on deployment.
         
@@ -171,11 +171,10 @@ class k8s:
             namespace (str): Namespace name
             deployment_name (str): Deployment name
             replicas (int): Number of replicas
-            node (str): Target node name
         """
         try:
             # Validate input parameters
-            if not all([namespace, deployment_name, node]):
+            if not all([namespace, deployment_name]):
                 raise ValueError("Missing required parameters")
             if replicas < 0:
                 raise ValueError("Replicas must be non-negative")
@@ -190,9 +189,6 @@ class k8s:
                 raise Exception(f"Deployment {deployment_name} not found in namespace {namespace}")
                 
             deployment.spec.replicas = replicas
-            deployment.spec.template.spec.node_selector = {
-                "kubernetes.io/hostname": node
-            }
 
             self.app_api.patch_namespaced_deployment(
                 name=deployment_name,
@@ -200,13 +196,13 @@ class k8s:
                 body=deployment,
                 _request_timeout=self.timeout
             )
-            logger.info(f"Updated deployment {deployment_name} to {replicas} replicas on node {node}")
+            logger.info(f"Updated deployment {deployment_name} to {replicas} replicas")
             
             # Wait for deployment to be ready with timeout
             start_time = time.time()
             while time.time() - start_time < self.timeout:
                 if self.wait_for_deployment_to_be_ready(namespace, deployment_name):
-                    logger.info(f'Deployment is now running on node {node}')
+                    logger.info(f'Deployment {deployment_name} is now running')
                     return
                 time.sleep(2)
             raise TimeoutError(f"Deployment {deployment_name} failed to become ready within {self.timeout} seconds")

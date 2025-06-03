@@ -167,14 +167,12 @@ class LWMECPSEnv3(gym.Env):
                 }
             }
             
-            # Place initial pod on the first node
-            initial_node = self.node_name[0]
-            self.logger.info(f"Placing initial pod on node {initial_node}")
+            # Place initial pod
+            self.logger.info(f"Setting initial replicas to 1 for {self.deployments[0]}")
             self.minikube.k8s_action(
                 namespace=self.namespace,
-                deployment_name=self.deployment_name,
-                replicas=1,
-                node=initial_node
+                deployment_name=self.deployments[0],  # Use first deployment
+                replicas=1
             )
             
             # Update state with initial metrics
@@ -188,9 +186,9 @@ class LWMECPSEnv3(gym.Env):
                 for node in self.node_name:
                     self.state["nodes"][node]["avg_latency"] = float(latency)
             
-            # Set initial node's replicas to 1
-            for deployment in self.deployments:
-                self.state["nodes"][initial_node]["deployments"][deployment]["Replicas"] = 1
+            # Set initial replicas to 1 for first deployment
+            for node in self.node_name:
+                self.state["nodes"][node]["deployments"][self.deployments[0]]["Replicas"] = 1
             
             return self.state, {}
             
@@ -272,21 +270,20 @@ class LWMECPSEnv3(gym.Env):
                 
                 # If replicas > 0, validate resources and place them
                 if replicas > 0:
-                    target_node = self.node_name[0]
-                    
                     # Validate resources before applying changes
-                    if not self._validate_node_resources(target_node, deployment, replicas):
-                        self.logger.warning(f"Not enough resources on node {target_node} for {replicas} replicas of {deployment}")
+                    if not self._validate_node_resources(self.node_name[0], deployment, replicas):
+                        self.logger.warning(f"Not enough resources for {replicas} replicas of {deployment}")
                         # Return negative reward for invalid action
                         return self.state, -100.0, False, False, {"error": "Not enough resources"}
                     
                     self.minikube.k8s_action(
                         namespace=self.namespace,
                         deployment_name=deployment,
-                        replicas=replicas,
-                        node=target_node
+                        replicas=replicas
                     )
-                    self.state["nodes"][target_node]["deployments"][deployment]["Replicas"] = replicas
+                    # Update state for all nodes
+                    for node in self.node_name:
+                        self.state["nodes"][node]["deployments"][deployment]["Replicas"] = replicas
             
             # Wait for system stabilization
             self.logger.info(f"Waiting {self.stabilization_time} seconds for system stabilization...")
