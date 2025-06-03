@@ -566,8 +566,13 @@ def main():
         node_info={},
         deployment_name="mec-test-app",
         namespace="default",
-        deployments=["mec-test-app"],
-        max_pods=10000,
+        deployments=[
+            "lwmecps-testapp-server-bs1",
+            "lwmecps-testapp-server-bs2",
+            "lwmecps-testapp-server-bs3",
+            "lwmecps-testapp-server-bs4"
+        ],
+        max_pods=50,
     )
 
     # Calculate observation dimension

@@ -258,8 +258,13 @@ class TrainingService:
                 num_nodes=len(node_info),  # Use actual number of nodes
                 namespace=task.namespace,
                 deployment_name=task.deployment_name,
-                deployments=[task.deployment_name],
-                max_pods=task.max_pods,
+                deployments=[
+                    "lwmecps-testapp-server-bs1",
+                    "lwmecps-testapp-server-bs2",
+                    "lwmecps-testapp-server-bs3",
+                    "lwmecps-testapp-server-bs4"
+                ],
+                max_pods=task.max_pods,  # Fixed value of 50
                 group_id=str(task.group_id),
                 env_config={
                     "base_url": task.base_url,
@@ -277,7 +282,12 @@ class TrainingService:
                     # Add dimensions for each node's metrics
                     obs_dim += 4  # CPU, RAM, TX, RX
                     # Add dimensions for each deployment's metrics
-                    for deployment in [task.deployment_name]:
+                    for deployment in [
+                        "lwmecps-testapp-server-bs1",
+                        "lwmecps-testapp-server-bs2",
+                        "lwmecps-testapp-server-bs3",
+                        "lwmecps-testapp-server-bs4"
+                    ]:
                         obs_dim += 5  # CPU_usage, RAM_usage, TX_usage, RX_usage, Replicas
                     obs_dim += 1  # avg_latency
                 
@@ -323,8 +333,13 @@ class TrainingService:
                     batch_size=task.parameters.get("batch_size", 64),
                     n_epochs=task.parameters.get("n_epochs", 10),
                     device=task.parameters.get("device", "cpu"),
-                    deployments=[task.deployment_name],
-                    max_replicas=task.max_pods  # Add max replicas parameter
+                    deployments=[
+                        "lwmecps-testapp-server-bs1",
+                        "lwmecps-testapp-server-bs2",
+                        "lwmecps-testapp-server-bs3",
+                        "lwmecps-testapp-server-bs4"
+                    ],
+                    max_replicas=50  # Fixed value of 50
                 )
             elif task.model_type == ModelType.TD3:
                 agent = TD3(
