@@ -485,14 +485,14 @@ class PPO:
                 
                 # Collect metrics
                 step_metrics = self.calculate_metrics(
-                    states[idx].cpu().numpy(),
-                    actions[idx].cpu().numpy(),
-                    self.buffer.rewards[idx],
-                    values.squeeze().detach().cpu().numpy(),
-                    new_log_probs.detach().cpu().numpy(),
-                    {"latency": self.buffer.rewards[idx].mean()},
-                    actor_loss.item(),
-                    critic_loss.item()
+                    state=states[idx].cpu().numpy(),
+                    action=actions[idx].cpu().numpy(),
+                    reward=self.buffer.rewards[idx],
+                    value=values.squeeze().detach().cpu().numpy(),
+                    log_prob=new_log_probs.detach().cpu().numpy(),
+                    info={"latency": self.buffer.rewards[idx].mean()},
+                    actor_loss=actor_loss.item(),
+                    critic_loss=critic_loss.item()
                 )
                 self.metrics_collector.update(step_metrics)
                 
