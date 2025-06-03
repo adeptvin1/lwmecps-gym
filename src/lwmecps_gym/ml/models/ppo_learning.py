@@ -13,46 +13,48 @@ logger = logging.getLogger(__name__)
 
 class ActorCritic(nn.Module):
     """
-    Архитектура нейронной сети для PPO, состоящая из двух частей:
-    1. Actor (политика) - определяет распределение действий
-    2. Critic (функция ценности) - оценивает ожидаемую награду
+    Neural network architecture for PPO, consisting of two parts:
+    1. Actor (policy) - determines action distribution
+    2. Critic (value function) - estimates expected reward
     
     Args:
-        obs_dim (int): Размерность вектора наблюдения
-        act_dim (int): Размерность пространства действий
-        hidden_size (int): Размер скрытых слоев
+        obs_dim (int): Observation vector dimension
+        act_dim (int): Action space dimension
+        hidden_size (int): Hidden layer size
+        max_replicas (int): Maximum number of replicas per deployment
     """
-    def __init__(self, obs_dim, act_dim, hidden_size=64):
+    def __init__(self, obs_dim, act_dim, hidden_size=64, max_replicas=10):
         super().__init__()
+        self.max_replicas = max_replicas
 
-        # Актер (Policy) - определяет распределение действий
+        # Actor (Policy) - determines action distribution
         self.actor = nn.Sequential(
             nn.Linear(obs_dim, hidden_size),
-            nn.Tanh(),  # Tanh для лучшей стабильности обучения
+            nn.Tanh(),
             nn.Linear(hidden_size, hidden_size),
             nn.Tanh(),
             nn.Linear(hidden_size, act_dim),
-            nn.Softmax(dim=-1)  # Преобразует выход в вероятности действий
+            nn.Sigmoid()  # Output between 0 and 1
         )
 
-        # Критик (Value function) - оценивает ожидаемую награду
+        # Critic (Value function) - estimates expected reward
         self.critic = nn.Sequential(
             nn.Linear(obs_dim, hidden_size),
             nn.Tanh(),
             nn.Linear(hidden_size, hidden_size),
             nn.Tanh(),
-            nn.Linear(hidden_size, 1)  # Одна выходная величина - оценка ценности состояния
+            nn.Linear(hidden_size, 1)
         )
 
     def forward(self, x):
         """
-        Прямой проход через сеть.
+        Forward pass through the network.
         
         Args:
-            x (torch.Tensor): Входной тензор состояния
+            x (torch.Tensor): Input state tensor
             
         Returns:
-            Tuple[torch.Tensor, torch.Tensor]: (распределение действий, оценка ценности)
+            Tuple[torch.Tensor, torch.Tensor]: (action distribution, value estimate)
         """
         action_probs = self.actor(x)
         value = self.critic(x)
@@ -60,40 +62,47 @@ class ActorCritic(nn.Module):
 
     def get_action_and_value(self, x):
         """
-        Получение действия, его логарифмической вероятности и оценки ценности.
+        Get action, its log probability, and value estimate.
         
         Args:
-            x (torch.Tensor): Входной тензор состояния
+            x (torch.Tensor): Input state tensor
             
         Returns:
             Tuple[torch.Tensor, torch.Tensor, torch.distributions.Distribution, torch.Tensor]:
-                (действие, log_prob, распределение, оценка ценности)
+                (action, log_prob, distribution, value estimate)
         """
         action_probs, value = self(x)
-        dist = torch.distributions.Categorical(action_probs)
+        # Scale action probabilities to max_replicas
+        action_probs = action_probs * self.max_replicas
+        # Create normal distribution with mean from actor and fixed std
+        dist = torch.distributions.Normal(action_probs, 1.0)
         action = dist.sample()
-        log_prob = dist.log_prob(action)
+        # Clip action to valid range
+        action = torch.clamp(action, 0, self.max_replicas)
+        log_prob = dist.log_prob(action).sum(dim=-1)
         return action, log_prob, dist, value
 
 
 class RolloutBuffer:
     """
-    Буфер для хранения траекторий опыта.
-    Используется для сбора данных перед обновлением политики.
+    Buffer for storing experience trajectories.
+    Used to collect data before policy update.
     
     Args:
-        n_steps (int): Количество шагов для сбора перед обновлением
-        obs_dim (int): Размерность вектора наблюдения
+        n_steps (int): Number of steps to collect before update
+        obs_dim (int): Observation vector dimension
+        act_dim (int): Action space dimension
     """
-    def __init__(self, n_steps, obs_dim):
+    def __init__(self, n_steps, obs_dim, act_dim):
         self.n_steps = n_steps
         self.obs_dim = obs_dim
+        self.act_dim = act_dim
         self.reset()
 
     def reset(self):
-        """Сброс буфера для нового сбора данных."""
+        """Reset buffer for new data collection."""
         self.states = np.zeros((self.n_steps, self.obs_dim), dtype=np.float32)
-        self.actions = np.zeros(self.n_steps, dtype=np.int64)
+        self.actions = np.zeros((self.n_steps, self.act_dim), dtype=np.float32)
         self.rewards = np.zeros(self.n_steps, dtype=np.float32)
         self.values = np.zeros(self.n_steps, dtype=np.float32)
         self.log_probs = np.zeros(self.n_steps, dtype=np.float32)
@@ -104,15 +113,15 @@ class RolloutBuffer:
 
     def add(self, state, action, reward, value, log_prob, done):
         """
-        Добавление одного шага опыта в буфер.
+        Add one step of experience to the buffer.
         
         Args:
-            state (np.ndarray): Состояние
-            action (int): Выбранное действие
-            reward (float): Полученная награда
-            value (float): Оценка ценности состояния
-            log_prob (float): Логарифмическая вероятность действия
-            done (bool): Флаг завершения эпизода
+            state (np.ndarray): State
+            action (np.ndarray): Selected action
+            reward (float): Received reward
+            value (float): State value estimate
+            log_prob (float): Action log probability
+            done (bool): Episode done flag
         """
         self.states[self.pos] = state
         self.actions[self.pos] = action
@@ -123,16 +132,16 @@ class RolloutBuffer:
         self.pos += 1
 
     def is_full(self):
-        """Проверка, заполнен ли буфер."""
+        """Check if buffer is full."""
         return self.pos >= self.n_steps
 
     def compute_advantages(self, gamma, lam):
         """
-        Вычисление преимуществ (advantages) с использованием GAE.
+        Compute advantages using GAE.
         
         Args:
-            gamma (float): Коэффициент дисконтирования
-            lam (float): Параметр lambda для GAE
+            gamma (float): Discount factor
+            lam (float): Lambda parameter for GAE
         """
         gae = 0
         for t in reversed(range(self.n_steps)):
@@ -172,23 +181,24 @@ class MetricsCollector:
 
 class PPO:
     """
-    Реализация алгоритма Proximal Policy Optimization.
+    Implementation of Proximal Policy Optimization algorithm.
     
     Args:
-        obs_dim (int): Размерность вектора наблюдения
-        act_dim (int): Размерность пространства действий
-        hidden_size (int): Размер скрытых слоев
-        lr (float): Скорость обучения
-        gamma (float): Коэффициент дисконтирования
-        lam (float): Параметр lambda для GAE
-        clip_eps (float): Параметр клиппинга для PPO
-        ent_coef (float): Коэффициент энтропии
-        vf_coef (float): Коэффициент функции ценности
-        n_steps (int): Количество шагов для сбора перед обновлением
-        batch_size (int): Размер батча для обновления
-        n_epochs (int): Количество эпох обновления
-        device (str): Устройство для вычислений (cpu/cuda)
-        deployments (List[str]): Список развертываний для обработки
+        obs_dim (int): Observation vector dimension
+        act_dim (int): Action space dimension
+        hidden_size (int): Hidden layer size
+        lr (float): Learning rate
+        gamma (float): Discount factor
+        lam (float): Lambda parameter for GAE
+        clip_eps (float): Clipping parameter for PPO
+        ent_coef (float): Entropy coefficient
+        vf_coef (float): Value function coefficient
+        n_steps (int): Number of steps to collect before update
+        batch_size (int): Batch size for update
+        n_epochs (int): Number of update epochs
+        device (str): Device for computation (cpu/cuda)
+        deployments (List[str]): List of deployments to process
+        max_replicas (int): Maximum number of replicas per deployment
     """
     def __init__(
         self,
@@ -205,7 +215,8 @@ class PPO:
         batch_size: int = 64,
         n_epochs: int = 10,
         device: str = "cpu",
-        deployments: List[str] = None
+        deployments: List[str] = None,
+        max_replicas: int = 10
     ):
         self.obs_dim = obs_dim
         self.act_dim = act_dim
@@ -220,84 +231,86 @@ class PPO:
         self.n_epochs = n_epochs
         self.device = device
         self.deployments = deployments or []
+        self.max_replicas = max_replicas
         self.metrics_collector = MetricsCollector()
 
-        # Инициализация модели и оптимизатора
-        self.model = ActorCritic(obs_dim, act_dim, hidden_size).to(device)
+        # Initialize model and optimizer
+        self.model = ActorCritic(obs_dim, act_dim, hidden_size, max_replicas).to(device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
-        self.buffer = RolloutBuffer(n_steps, obs_dim)
+        self.buffer = RolloutBuffer(n_steps, obs_dim, act_dim)
 
     def _flatten_observation(self, obs):
         """
-        Преобразует наблюдение в одномерный вектор.
+        Flatten observation into a 1D vector.
         
         Args:
-            obs: Наблюдение из среды
+            obs: Observation from environment
             
         Returns:
-            np.ndarray: Одномерный вектор наблюдения
+            np.ndarray: Flattened observation vector
         """
         if isinstance(obs, np.ndarray):
             return obs
             
-        # Сортируем узлы для стабильного порядка
-        sorted_nodes = sorted(obs.keys())
+        # Sort nodes for stable order
+        sorted_nodes = sorted(obs["nodes"].keys())
         
-        # Создаем вектор наблюдения
+        # Create observation vector
         obs_vector = []
         for node in sorted_nodes:
-            node_obs = obs[node]
-            # Добавляем метрики оборудования
+            node_obs = obs["nodes"][node]
+            # Add node metrics
             obs_vector.extend([
-                float(node_obs["cpu"]),
-                float(node_obs["ram"]),
-                float(node_obs["tx_bandwidth"]),
-                float(node_obs["rx_bandwidth"]),
-                float(node_obs["read_disks_bandwidth"]),
-                float(node_obs["write_disks_bandwidth"]),
-                float(node_obs["avg_latency"])
+                node_obs["CPU"],
+                node_obs["RAM"],
+                node_obs["TX"],
+                node_obs["RX"]
             ])
-            # Добавляем метрики развертываний
+            
+            # Add deployment metrics
             for deployment in self.deployments:
-                obs_vector.append(float(node_obs["deployments"][deployment]["replicas"]))
+                dep_obs = node_obs["deployments"][deployment]
+                obs_vector.extend([
+                    dep_obs["CPU_usage"],
+                    dep_obs["RAM_usage"],
+                    dep_obs["TX_usage"],
+                    dep_obs["RX_usage"],
+                    dep_obs["Replicas"]
+                ])
+            
+            # Add latency
+            obs_vector.append(node_obs["avg_latency"])
         
         return np.array(obs_vector, dtype=np.float32)
 
-    def select_action(self, state: Union[np.ndarray, Dict, Tuple]) -> Tuple[int, float, float]:
+    def select_action(self, state: Union[np.ndarray, Dict, Tuple]) -> Tuple[np.ndarray, float, float]:
         """
-        Выбор действия на основе текущего состояния.
+        Select action based on current state.
         
         Args:
-            state: Текущее состояние
+            state: Current state from environment
             
         Returns:
-            Tuple[int, float, float]: (выбранное действие, log_prob, оценка ценности)
+            Tuple[np.ndarray, float, float]: (action, log_prob, value)
         """
-        try:
-            # Преобразование состояния в тензор
+        with torch.no_grad():
             state = self._flatten_observation(state)
             state = torch.FloatTensor(state).unsqueeze(0).to(self.device)
-            
-            # Получение действия и оценки ценности
             action, log_prob, _, value = self.model.get_action_and_value(state)
-            
-            return action.item(), log_prob.item(), value.item()
-        except Exception as e:
-            logger.error(f"Error in select_action: {str(e)}")
-            raise
+            return action.cpu().numpy()[0], log_prob.cpu().numpy()[0], value.cpu().numpy()[0][0]
 
     def collect_trajectories(self, env) -> Tuple[float, int]:
         """
-        Сбор траекторий опыта из среды.
+        Collect trajectories from environment.
         
         Args:
-            env: Среда для взаимодействия
+            env: Environment for interaction
             
         Returns:
-            Tuple[float, int]: (награда за эпизод, длина эпизода)
+            Tuple[float, int]: (episode reward, episode length)
         """
         self.buffer.reset()
-        state, _ = env.reset()  # Получаем начальное состояние и info
+        state, _ = env.reset()  # Get initial state and info
         done = False
         episode_reward = 0
         episode_length = 0
@@ -306,7 +319,7 @@ class PPO:
             while not self.buffer.is_full():
                 action, log_prob, value = self.select_action(state)
                 next_state, reward, done, info = env.step(action)
-                # Преобразуем состояние в плоский массив перед добавлением в буфер
+                # Flatten state before adding to buffer
                 flattened_state = self._flatten_observation(state)
                 self.buffer.add(flattened_state, action, reward, value, log_prob, done)
                 state = next_state
@@ -314,7 +327,7 @@ class PPO:
                 episode_length += 1
 
                 if done:
-                    state, _ = env.reset()  # Получаем новое начальное состояние и info
+                    state, _ = env.reset()  # Get new initial state and info
                     episode_reward = 0
                     episode_length = 0
 
@@ -356,39 +369,39 @@ class PPO:
         return metrics
 
     def update(self) -> Dict[str, float]:
-        """Обновление политики на основе собранных данных."""
-        # Вычисление преимуществ
+        """Update policy based on collected data."""
+        # Compute advantages
         self.buffer.compute_advantages(self.gamma, self.lam)
         
-        # Подготовка данных для обновления
+        # Prepare data for update
         states = torch.FloatTensor(self.buffer.states).to(self.device)
-        actions = torch.LongTensor(self.buffer.actions).to(self.device)
+        actions = torch.FloatTensor(self.buffer.actions).to(self.device)
         old_values = torch.FloatTensor(self.buffer.values).to(self.device)
         old_log_probs = torch.FloatTensor(self.buffer.log_probs).to(self.device)
         advantages = torch.FloatTensor(self.buffer.advantages).to(self.device)
         returns = torch.FloatTensor(self.buffer.returns).to(self.device)
         
-        # Нормализация преимуществ
+        # Normalize advantages
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         
         total_actor_loss = 0
         total_critic_loss = 0
         total_entropy = 0
         
-        # Обновление в течение нескольких эпох
+        # Update over multiple epochs
         for _ in range(self.n_epochs):
-            # Создание батчей
+            # Create batches
             indices = np.random.permutation(self.n_steps)
             for start_idx in range(0, self.n_steps, self.batch_size):
                 idx = indices[start_idx:start_idx + self.batch_size]
                 
-                # Получение новых значений
+                # Get new values
                 action_probs, values = self.model(states[idx])
-                dist = torch.distributions.Categorical(action_probs)
-                new_log_probs = dist.log_prob(actions[idx])
+                dist = torch.distributions.Normal(action_probs, 1.0)
+                new_log_probs = dist.log_prob(actions[idx]).sum(dim=-1)
                 entropy = dist.entropy().mean()
                 
-                # Вычисление отношения вероятностей
+                # Calculate ratio of probabilities
                 ratio = torch.exp(new_log_probs - old_log_probs[idx])
                 
                 # PPO loss
@@ -399,15 +412,15 @@ class PPO:
                 # Value loss
                 critic_loss = 0.5 * (returns[idx] - values.squeeze()).pow(2).mean()
                 
-                # Общий loss
+                # Total loss
                 loss = actor_loss + self.vf_coef * critic_loss - self.ent_coef * entropy
                 
-                # Обновление параметров
+                # Update parameters
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
                 
-                # Сбор метрик
+                # Collect metrics
                 step_metrics = self.calculate_metrics(
                     states[idx].cpu().numpy(),
                     actions[idx].cpu().numpy(),
@@ -424,10 +437,10 @@ class PPO:
                 total_critic_loss += critic_loss.item()
                 total_entropy += entropy.item()
         
-        # Сброс буфера
+        # Reset buffer
         self.buffer.reset()
         
-        # Возврат средних значений loss
+        # Return average loss values
         return {
             "actor_loss": total_actor_loss / (self.n_epochs * (self.n_steps // self.batch_size)),
             "critic_loss": total_critic_loss / (self.n_epochs * (self.n_steps // self.batch_size)),
@@ -435,31 +448,31 @@ class PPO:
         }
 
     def train(self, env, total_timesteps: int, wandb_run_id: Optional[str] = None) -> Dict[str, List[float]]:
-        """Обучение агента."""
+        """Train agent."""
         timesteps_so_far = 0
         episode_metrics = {}
         
         while timesteps_so_far < total_timesteps:
-            # Сбор траекторий
+            # Collect trajectories
             episode_reward, episode_length = self.collect_trajectories(env)
             timesteps_so_far += episode_length
             
-            # Обновление политики
+            # Update policy
             update_metrics = self.update()
             
-            # Получение средних метрик
+            # Get average metrics
             avg_metrics = self.metrics_collector.get_average_metrics()
             
-            # Объединение всех метрик
+            # Combine all metrics
             all_metrics = {**avg_metrics, **update_metrics}
             
-            # Сохранение метрик
+            # Save metrics
             for key, value in all_metrics.items():
                 if key not in episode_metrics:
                     episode_metrics[key] = []
                 episode_metrics[key].append(value)
             
-            # Логирование в wandb
+            # Log to wandb
             if wandb_run_id:
                 wandb.log({
                     "timesteps": timesteps_so_far,
@@ -468,7 +481,7 @@ class PPO:
                     **all_metrics
                 })
             
-            # Вывод информации
+            # Output information
             logger.info(
                 f"Timesteps: {timesteps_so_far}/{total_timesteps}, "
                 f"Episode Reward: {episode_reward:.2f}, "
@@ -486,10 +499,10 @@ class PPO:
 
     def save_model(self, path: str):
         """
-        Сохранение модели.
+        Save model.
         
         Args:
-            path (str): Путь для сохранения
+            path (str): Path to save
         """
         try:
             torch.save({
@@ -497,7 +510,8 @@ class PPO:
                 'optimizer_state_dict': self.optimizer.state_dict(),
                 'obs_dim': self.obs_dim,
                 'act_dim': self.act_dim,
-                'deployments': self.deployments
+                'deployments': self.deployments,
+                'max_replicas': self.max_replicas
             }, path)
             logger.info(f"Model saved to {path}")
         except Exception as e:
@@ -506,10 +520,10 @@ class PPO:
 
     def load_model(self, path: str):
         """
-        Загрузка модели.
+        Load model.
         
         Args:
-            path (str): Путь к сохраненной модели
+            path (str): Path to saved model
         """
         try:
             checkpoint = torch.load(path)
@@ -518,6 +532,7 @@ class PPO:
             self.obs_dim = checkpoint['obs_dim']
             self.act_dim = checkpoint['act_dim']
             self.deployments = checkpoint['deployments']
+            self.max_replicas = checkpoint['max_replicas']
             logger.info(f"Model loaded from {path}")
         except Exception as e:
             logger.error(f"Error loading model: {str(e)}")
@@ -525,7 +540,7 @@ class PPO:
 
 
 def main():
-    # Создаем окружение
+    # Create environment
     env = LWMECPSEnv(
         num_nodes=3,
         node_name=["node1", "node2", "node3"],
@@ -553,17 +568,19 @@ def main():
         max_pods=10000,
     )
 
-    # Вычисляем размерность наблюдения
+    # Calculate observation dimension
     obs_dim = 0
     for node in env.node_name:
-        # Добавляем метрики оборудования
-        obs_dim += 7  # cpu, ram, tx_bandwidth, rx_bandwidth, read_disks_bandwidth, write_disks_bandwidth, avg_latency
-        # Добавляем метрики развертываний
-        obs_dim += len(env.deployments)  # replicas для каждого развертывания
+        # Add node metrics
+        obs_dim += 4  # cpu, ram, tx_bandwidth, rx_bandwidth
+        # Add deployment metrics
+        obs_dim += len(env.deployments) * 5  # cpu_usage, ram_usage, tx_usage, rx_usage, replicas for each deployment
+        # Add latency
+        obs_dim += 1
 
-    act_dim = env.action_space.n  # 3 действия: scale down, no change, scale up
+    act_dim = env.action_space.shape[0]  # 3 actions: scale down, no change, scale up
 
-    # Создаём агент PPO
+    # Create PPO agent
     ppo_agent = PPO(
         obs_dim=obs_dim,
         act_dim=act_dim,
@@ -578,14 +595,15 @@ def main():
         batch_size=64,
         n_epochs=10,
         device="cpu",
-        deployments=env.deployments
+        deployments=env.deployments,
+        max_replicas=10
     )
 
-    # Запускаем обучение на 10 итераций
+    # Start training for 10 iterations
     print("Starting PPO training for 10 iterations...")
     ppo_agent.train(env, total_timesteps=20480, wandb_run_id="ppo_training")  # 2048 * 10 = 20480 timesteps
 
-    # Тестируем обученную модель
+    # Test trained model
     print("\nTesting trained model...")
     state = env.reset()
     done = False

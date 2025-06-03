@@ -275,9 +275,14 @@ class TrainingService:
                 obs_dim = 0
                 for node in node_info:
                     # Add dimensions for each node's metrics
-                    obs_dim += 6  # cpu, ram, tx_bandwidth, rx_bandwidth, read_disks_bandwidth, write_disks_bandwidth
-                    obs_dim += len([task.deployment_name])  # replicas for each deployment
-                act_dim = env.action_space.n
+                    obs_dim += 4  # CPU, RAM, TX, RX
+                    # Add dimensions for each deployment's metrics
+                    for deployment in [task.deployment_name]:
+                        obs_dim += 5  # CPU_usage, RAM_usage, TX_usage, RX_usage, Replicas
+                    obs_dim += 1  # avg_latency
+                
+                # For Box action space, we need the shape
+                act_dim = env.action_space.shape[0]  # Number of deployments
                 logger.info(f"Observation dimension: {obs_dim}, Action dimension: {act_dim}")
             except Exception as e:
                 logger.error(f"Failed to get environment dimensions: {str(e)}")
@@ -307,18 +312,19 @@ class TrainingService:
                 agent = PPO(
                     obs_dim=obs_dim,
                     act_dim=act_dim,
-                    hidden_size=task.parameters.get("hidden_size", 64),
+                    hidden_size=task.parameters.get("hidden_size", 256),  # Increased for complex state
                     lr=task.parameters.get("learning_rate", 3e-4),
                     gamma=task.parameters.get("discount_factor", 0.99),
                     lam=task.parameters.get("lambda", 0.95),
                     clip_eps=task.parameters.get("clip_epsilon", 0.2),
-                    ent_coef=task.parameters.get("entropy_coef", 0.0),
+                    ent_coef=task.parameters.get("entropy_coef", 0.01),  # Increased for exploration
                     vf_coef=task.parameters.get("value_function_coef", 0.5),
                     n_steps=task.parameters.get("n_steps", 2048),
                     batch_size=task.parameters.get("batch_size", 64),
                     n_epochs=task.parameters.get("n_epochs", 10),
                     device=task.parameters.get("device", "cpu"),
-                    deployments=task.parameters.get("deployments", ["mec-test-app"])
+                    deployments=[task.deployment_name],
+                    max_replicas=task.max_pods  # Add max replicas parameter
                 )
             elif task.model_type == ModelType.TD3:
                 agent = TD3(
