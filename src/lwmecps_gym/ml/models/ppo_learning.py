@@ -25,6 +25,7 @@ class ActorCritic(nn.Module):
     """
     def __init__(self, obs_dim, act_dim, hidden_size=64, max_replicas=10):
         super().__init__()
+        self.act_dim = act_dim
         self.max_replicas = max_replicas
 
         # Actor (Policy) - determines action distribution
@@ -101,7 +102,7 @@ class RolloutBuffer:
     def reset(self):
         """Reset buffer for new data collection."""
         self.states = np.zeros((self.n_steps, self.obs_dim), dtype=np.float32)
-        self.actions = np.zeros((self.n_steps, self.act_dim), dtype=np.float32)
+        self.actions = np.zeros((self.n_steps, self.act_dim), dtype=np.int32)
         self.rewards = np.zeros(self.n_steps, dtype=np.float32)
         self.values = np.zeros(self.n_steps, dtype=np.float32)
         self.log_probs = np.zeros(self.n_steps, dtype=np.float32)
@@ -375,7 +376,7 @@ class PPO:
         
         # Prepare data for update
         states = torch.FloatTensor(self.buffer.states).to(self.device)
-        actions = torch.FloatTensor(self.buffer.actions).to(self.device)
+        actions = torch.LongTensor(self.buffer.actions).to(self.device)
         old_values = torch.FloatTensor(self.buffer.values).to(self.device)
         old_log_probs = torch.FloatTensor(self.buffer.log_probs).to(self.device)
         advantages = torch.FloatTensor(self.buffer.advantages).to(self.device)
