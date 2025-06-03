@@ -50,7 +50,6 @@ class TrainingTask(BaseModel):
     model_path: Optional[str] = None
     group_id: str
     namespace: str = "default"
-    deployment_name: str = "mec-test-app"
     max_pods: int = 10000
     base_url: str = "http://localhost:8001"
     stabilization_time: int = 10

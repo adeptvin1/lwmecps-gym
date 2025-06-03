@@ -1,5 +1,6 @@
 import re
 from time import sleep
+from typing import List, Dict, Any
 
 import bitmath
 import gymnasium as gym
@@ -12,27 +13,31 @@ class LWMECPSEnv2(gym.Env):
 
     def __init__(
         self,
-        node_name,
-        max_hardware,
-        pod_usage,
-        node_info,
-        num_nodes,
-        namespace,
-        deployment_name,
-        deployments,
-        max_pods,
+        node_name: List[str],
+        max_hardware: Dict[str, float],
+        pod_usage: Dict[str, float],
+        node_info: Dict[str, Dict[str, float]],
+        num_nodes: int,
+        namespace: str,
+        deployments: List[str],
+        max_pods: int,
+        group_id: str,
+        base_url: str = "http://localhost:8001",
+        env_config: Dict[str, Any] = None,
+        stabilization_time: int = 10
     ):
-        super(LWMECPSEnv2, self).__init__()
-        self.num_nodes = num_nodes
+        super().__init__()
         self.node_name = node_name
         self.max_hardware = max_hardware
         self.pod_usage = pod_usage
         self.node_info = node_info
+        self.num_nodes = num_nodes
         self.namespace = namespace
-        self.deployment_name = deployment_name
         self.deployments = deployments
         self.max_pods = max_pods
-
+        self.group_id = group_id
+        self.base_url = env_config.get("base_url", base_url) if env_config else base_url
+        self.stabilization_time = int(env_config.get("stabilization_time", stabilization_time)) if env_config else stabilization_time
         self.minikube = k8s()
 
         self.prev_latency = None

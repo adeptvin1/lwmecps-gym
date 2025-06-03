@@ -22,50 +22,39 @@ class LWMECPSEnv3(gym.Env):
     
     def __init__(
         self,
-        node_name: List[str],  # Changed to List[str] to support multiple nodes
+        node_name: List[str],
         max_hardware: Dict[str, float],
         pod_usage: Dict[str, float],
         node_info: Dict[str, Dict[str, float]],
         num_nodes: int,
         namespace: str,
-        deployment_name: str,
         deployments: List[str],
         max_pods: int,
         group_id: str,
         base_url: str = "http://localhost:8001",
         env_config: Dict[str, Any] = None,
-        stabilization_time: int = 10  # Default stabilization time in seconds
+        stabilization_time: int = 10
     ):
         super().__init__()
-        
         self.node_name = node_name
         self.max_hardware = max_hardware
         self.pod_usage = pod_usage
         self.node_info = node_info
         self.num_nodes = num_nodes
         self.namespace = namespace
-        self.deployment_name = deployment_name
         self.deployments = deployments
         self.max_pods = max_pods
         self.group_id = group_id
         self.base_url = env_config.get("base_url", base_url) if env_config else base_url
         self.stabilization_time = int(env_config.get("stabilization_time", stabilization_time)) if env_config else stabilization_time
-        
-        # Initialize Kubernetes client
         self.minikube = k8s()
-        
-        # Calculate max_replicas based on CPU capacity
         self.max_replicas = int(self.max_hardware["cpu"] / self.pod_usage["cpu"])
-        
-        # Action space: number of replicas for each deployment
         self.action_space = gym.spaces.Box(
             low=0,
             high=self.max_replicas,
             shape=(len(deployments),),
             dtype=np.int32
         )
-        
-        # Observation space with resource metrics
         self.observation_space = gym.spaces.Dict({
             "nodes": gym.spaces.Dict({
                 node: gym.spaces.Dict({
@@ -86,11 +75,7 @@ class LWMECPSEnv3(gym.Env):
                 }) for node in node_name
             })
         })
-        
-        # Initialize state
         self.state = None
-        
-        # Configure logging
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.INFO)
         

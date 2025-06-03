@@ -251,11 +251,11 @@ class TrainingService:
             logger.info("Creating environment")
             env = gym.make(
                 "lwmecps-v3",
-                node_name=list(node_info.keys()),  # Convert to list
+                node_name=list(node_info.keys()),
                 max_hardware=max_hardware,
                 pod_usage=pod_usage,
                 node_info=node_info,
-                num_nodes=len(node_info),  # Use actual number of nodes
+                num_nodes=len(node_info),
                 namespace=task.namespace,
                 deployments=[
                     "lwmecps-testapp-server-bs1",
@@ -263,7 +263,7 @@ class TrainingService:
                     "lwmecps-testapp-server-bs3",
                     "lwmecps-testapp-server-bs4"
                 ],
-                max_pods=task.max_pods,  # Fixed value of 50
+                max_pods=task.max_pods,
                 group_id=str(task.group_id),
                 env_config={
                     "base_url": task.base_url,
