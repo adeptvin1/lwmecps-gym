@@ -351,13 +351,15 @@ class PPO:
             state = torch.FloatTensor(state).unsqueeze(0).to(self.device)
             action, log_prob, _, value = self.model.get_action_and_value(state)
             action = action.cpu().numpy()[0].astype(np.int32)
+            value = value.cpu().numpy()[0][0].item()  # Convert tensor to float
+            log_prob = log_prob.cpu().numpy()[0].item()  # Convert tensor to float
             
             # Validate action values
             if not np.all((action >= 0) & (action <= self.max_replicas)):
                 logger.warning(f"Invalid action values detected: {action}. Clipping to valid range [0, {self.max_replicas}]")
                 action = np.clip(action, 0, self.max_replicas)
             
-            return action, log_prob.cpu().numpy()[0], value.cpu().numpy()[0][0]
+            return action, log_prob, value
 
     def collect_trajectories(self, env) -> Tuple[float, int]:
         """
