@@ -77,8 +77,9 @@ class ActorCritic(nn.Module):
         # Create normal distribution with mean from actor and fixed std
         dist = torch.distributions.Normal(action_probs, 1.0)
         action = dist.sample()
-        # Clip action to valid range
+        # Clip action to valid range and round to integers
         action = torch.clamp(action, 0, self.max_replicas)
+        action = torch.round(action)  # Round to nearest integer
         log_prob = dist.log_prob(action).sum(dim=-1)
         return action, log_prob, dist, value
 
@@ -318,7 +319,8 @@ class PPO:
         try:
             while not self.buffer.is_full():
                 action, log_prob, value = self.select_action(state)
-                next_state, reward, done, info = env.step(action)
+                next_state, reward, terminated, truncated, info = env.step(action)
+                done = terminated or truncated
                 # Flatten state before adding to buffer
                 flattened_state = self._flatten_observation(state)
                 self.buffer.add(flattened_state, action, reward, value, log_prob, done)
