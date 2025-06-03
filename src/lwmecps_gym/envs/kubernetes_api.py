@@ -80,6 +80,8 @@ class k8s:
             
             block_ns = ['kube-node-lease', 'kube-public', 'kube-system', 'kubernetes-dashboard']
             namespaces = [namespace.metadata.name for namespace in all_namespaces.items if namespace.metadata.name not in block_ns]
+            if 'lwmecps-testapp' not in namespaces:
+                namespaces.append('lwmecps-testapp')
             logger.info(f"Using namespaces: {namespaces}")
 
             pod_count = {namespace: {} for namespace in namespaces}
