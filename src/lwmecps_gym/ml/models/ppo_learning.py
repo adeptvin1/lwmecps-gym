@@ -563,7 +563,7 @@ class PPO:
             if done or len(self.buffer.states) >= self.n_steps:
                 # Calculate metrics for the episode
                 metrics = self.calculate_metrics(
-                    obs=self.buffer.states[-1],
+                    state=self.buffer.states[-1],
                     action=self.buffer.actions[-1],
                     reward=reward,
                     value=self.buffer.values[-1],
