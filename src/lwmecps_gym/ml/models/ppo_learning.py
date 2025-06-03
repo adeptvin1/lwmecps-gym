@@ -519,6 +519,28 @@ class PPO:
         timesteps_so_far = 0
         episode_metrics = {}
         
+        # Initialize wandb if run_id is provided
+        if wandb_run_id:
+            wandb.init(
+                id=wandb_run_id,
+                project="lwmecps-gym",
+                config={
+                    "algorithm": "PPO",
+                    "total_timesteps": total_timesteps,
+                    "hidden_size": self.model.actor[0].out_features,  # Get hidden size from model
+                    "learning_rate": self.optimizer.param_groups[0]['lr'],
+                    "gamma": self.gamma,
+                    "lam": self.lam,
+                    "clip_eps": self.clip_eps,
+                    "ent_coef": self.ent_coef,
+                    "vf_coef": self.vf_coef,
+                    "n_steps": self.n_steps,
+                    "batch_size": self.batch_size,
+                    "n_epochs": self.n_epochs,
+                    "max_replicas": self.max_replicas
+                }
+            )
+        
         while timesteps_so_far < total_timesteps:
             # Collect trajectories
             episode_reward, episode_length = self.collect_trajectories(env)
@@ -545,7 +567,16 @@ class PPO:
                     "timesteps": timesteps_so_far,
                     "episode_reward": episode_reward,
                     "episode_length": episode_length,
-                    **all_metrics
+                    "metrics/accuracy": avg_metrics.get('accuracy', 0),
+                    "metrics/mse": avg_metrics.get('mse', 0),
+                    "metrics/mre": avg_metrics.get('mre', 0),
+                    "metrics/avg_latency": avg_metrics.get('avg_latency', 0),
+                    "metrics/value": avg_metrics.get('value', 0),
+                    "metrics/log_prob": avg_metrics.get('log_prob', 0),
+                    "losses/policy_loss": update_metrics['actor_loss'],
+                    "losses/value_loss": update_metrics['critic_loss'],
+                    "losses/entropy_loss": update_metrics['entropy'],
+                    "losses/total_loss": update_metrics['actor_loss'] + self.vf_coef * update_metrics['critic_loss'] - self.ent_coef * update_metrics['entropy']
                 })
             
             # Output information
@@ -561,6 +592,10 @@ class PPO:
                 f"MRE: {avg_metrics.get('mre', 0):.3f}, "
                 f"Avg Latency: {avg_metrics.get('avg_latency', 0):.2f}"
             )
+        
+        # Close wandb run
+        if wandb_run_id:
+            wandb.finish()
         
         return episode_metrics
 
