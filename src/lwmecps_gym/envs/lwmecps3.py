@@ -54,10 +54,13 @@ class LWMECPSEnv3(gym.Env):
         # Initialize Kubernetes client
         self.minikube = k8s()
         
+        # Calculate max_replicas based on CPU capacity
+        self.max_replicas = int(self.max_hardware["cpu"] / self.pod_usage["cpu"])
+        
         # Action space: number of replicas for each deployment
         self.action_space = gym.spaces.Box(
             low=0,
-            high=max_pods,
+            high=self.max_replicas,
             shape=(len(deployments),),
             dtype=np.int32
         )
@@ -255,8 +258,8 @@ class LWMECPSEnv3(gym.Env):
             if not isinstance(action, np.ndarray) or action.shape != (len(self.deployments),):
                 raise ValueError(f"Invalid action shape. Expected shape ({len(self.deployments)},), got {action.shape if isinstance(action, np.ndarray) else type(action)}")
             
-            if not all(0 <= a <= self.max_pods for a in action):
-                raise ValueError(f"Invalid action values. All values must be between 0 and {self.max_pods}")
+            if not all(0 <= a <= self.max_replicas for a in action):
+                raise ValueError(f"Invalid action values. All values must be between 0 and {self.max_replicas}")
             
             # Update replicas for each deployment
             for i, deployment in enumerate(self.deployments):
