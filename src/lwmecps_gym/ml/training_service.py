@@ -322,6 +322,8 @@ class TrainingService:
                     batch_size=task.parameters.get("batch_size", 32)
                 )
             elif task.model_type == ModelType.PPO:
+                # Calculate max_replicas based on CPU capacity
+                max_replicas = int(max_hardware["cpu"] / pod_usage["cpu"])
                 agent = PPO(
                     obs_dim=obs_dim,
                     act_dim=act_dim,
@@ -342,7 +344,7 @@ class TrainingService:
                         "lwmecps-testapp-server-bs3",
                         "lwmecps-testapp-server-bs4"
                     ],
-                    max_replicas=50  # Fixed value of 50
+                    max_replicas=max_replicas  # Use calculated value
                 )
             elif task.model_type == ModelType.TD3:
                 agent = TD3(

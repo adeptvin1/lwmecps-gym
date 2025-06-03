@@ -28,7 +28,13 @@ class ActorCritic(nn.Module):
         self.act_dim = act_dim
         self.max_replicas = max_replicas
 
-        # Actor (Policy) - determines action distribution
+        # Validate dimensions
+        if act_dim <= 0:
+            raise ValueError(f"act_dim must be positive, got {act_dim}")
+        if max_replicas <= 0:
+            raise ValueError(f"max_replicas must be positive, got {max_replicas}")
+
+        # Actor (Policy)
         self.actor = nn.Sequential(
             nn.Linear(obs_dim, hidden_size),
             nn.Tanh(),
@@ -37,7 +43,7 @@ class ActorCritic(nn.Module):
             nn.Linear(hidden_size, act_dim * (max_replicas + 1))  # Output logits for each action
         )
 
-        # Critic (Value function) - estimates expected reward
+        # Critic (Value function)
         self.critic = nn.Sequential(
             nn.Linear(obs_dim, hidden_size),
             nn.Tanh(),
@@ -51,11 +57,14 @@ class ActorCritic(nn.Module):
         Forward pass through the network.
         
         Args:
-            x (torch.Tensor): Input state tensor
+            x (torch.Tensor): Input state tensor of shape [batch_size, obs_dim]
             
         Returns:
-            Tuple[torch.Tensor, torch.Tensor]: (action logits, value estimate)
+            Tuple[torch.Tensor, torch.Tensor]: (action logits of shape [batch_size, act_dim * (max_replicas + 1)], 
+                                             value estimate of shape [batch_size, 1])
         """
+        if x.dim() != 2:
+            raise ValueError(f"Expected 2D input tensor, got shape {x.shape}")
         logits = self.actor(x)
         value = self.critic(x)
         return logits, value
@@ -65,11 +74,14 @@ class ActorCritic(nn.Module):
         Get action, its log probability, and value estimate.
         
         Args:
-            x (torch.Tensor): Input state tensor
+            x (torch.Tensor): Input state tensor of shape [batch_size, obs_dim]
             
         Returns:
             Tuple[torch.Tensor, torch.Tensor, torch.distributions.Distribution, torch.Tensor]:
-                (action, log_prob, distribution, value estimate)
+                (action of shape [batch_size, act_dim],
+                 log_prob of shape [batch_size],
+                 distribution,
+                 value estimate of shape [batch_size, 1])
         """
         logits, value = self(x)
         # Reshape logits to [batch_size, num_deployments, num_actions]
@@ -94,6 +106,13 @@ class RolloutBuffer:
         act_dim (int): Action space dimension
     """
     def __init__(self, n_steps, obs_dim, act_dim):
+        if n_steps <= 0:
+            raise ValueError(f"n_steps must be positive, got {n_steps}")
+        if obs_dim <= 0:
+            raise ValueError(f"obs_dim must be positive, got {obs_dim}")
+        if act_dim <= 0:
+            raise ValueError(f"act_dim must be positive, got {act_dim}")
+            
         self.n_steps = n_steps
         self.obs_dim = obs_dim
         self.act_dim = act_dim
@@ -116,13 +135,32 @@ class RolloutBuffer:
         Add one step of experience to the buffer.
         
         Args:
-            state (np.ndarray): State
-            action (np.ndarray): Selected action
+            state (np.ndarray): State of shape [obs_dim]
+            action (np.ndarray): Selected action of shape [act_dim]
             reward (float): Received reward
             value (float): State value estimate
             log_prob (float): Action log probability
             done (bool): Episode done flag
         """
+        if self.pos >= self.n_steps:
+            raise ValueError("Buffer is full")
+            
+        # Validate shapes
+        if state.shape != (self.obs_dim,):
+            raise ValueError(f"Expected state shape {(self.obs_dim,)}, got {state.shape}")
+        if action.shape != (self.act_dim,):
+            raise ValueError(f"Expected action shape {(self.act_dim,)}, got {action.shape}")
+            
+        # Validate types
+        if not isinstance(reward, (int, float)):
+            raise TypeError(f"Expected reward to be numeric, got {type(reward)}")
+        if not isinstance(value, (int, float)):
+            raise TypeError(f"Expected value to be numeric, got {type(value)}")
+        if not isinstance(log_prob, (int, float)):
+            raise TypeError(f"Expected log_prob to be numeric, got {type(log_prob)}")
+        if not isinstance(done, bool):
+            raise TypeError(f"Expected done to be bool, got {type(done)}")
+            
         self.states[self.pos] = state
         self.actions[self.pos] = action
         self.rewards[self.pos] = reward
@@ -158,12 +196,27 @@ class RolloutBuffer:
 class MetricsCollector:
     def __init__(self):
         self.metrics = {}
+        self.metric_validators = {
+            "accuracy": lambda x: 0 <= x <= 1,
+            "mse": lambda x: x >= 0,
+            "mre": lambda x: x >= 0,
+            "avg_latency": lambda x: x >= 0,
+            "total_reward": lambda x: True,  # Can be negative
+            "value": lambda x: True,  # Can be negative
+            "log_prob": lambda x: True,  # Can be negative
+            "actor_loss": lambda x: x >= 0,
+            "critic_loss": lambda x: x >= 0
+        }
     
     def update(self, metrics_dict: Dict[str, float]):
         """Update metrics with new values."""
         for key, value in metrics_dict.items():
             if key not in self.metrics:
                 self.metrics[key] = []
+            if key in self.metric_validators:
+                if not self.metric_validators[key](value):
+                    logger.warning(f"Invalid value for metric {key}: {value}")
+                    continue
             self.metrics[key].append(value)
     
     def get_average_metrics(self) -> Dict[str, float]:
@@ -297,7 +350,14 @@ class PPO:
             state = self._flatten_observation(state)
             state = torch.FloatTensor(state).unsqueeze(0).to(self.device)
             action, log_prob, _, value = self.model.get_action_and_value(state)
-            return action.cpu().numpy()[0].astype(np.int32), log_prob.cpu().numpy()[0], value.cpu().numpy()[0][0]
+            action = action.cpu().numpy()[0].astype(np.int32)
+            
+            # Validate action values
+            if not np.all((action >= 0) & (action <= self.max_replicas)):
+                logger.warning(f"Invalid action values detected: {action}. Clipping to valid range [0, {self.max_replicas}]")
+                action = np.clip(action, 0, self.max_replicas)
+            
+            return action, log_prob.cpu().numpy()[0], value.cpu().numpy()[0][0]
 
     def collect_trajectories(self, env) -> Tuple[float, int]:
         """
