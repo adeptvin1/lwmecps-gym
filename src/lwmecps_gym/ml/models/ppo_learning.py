@@ -297,7 +297,7 @@ class PPO:
             state = self._flatten_observation(state)
             state = torch.FloatTensor(state).unsqueeze(0).to(self.device)
             action, log_prob, _, value = self.model.get_action_and_value(state)
-            return action.cpu().numpy()[0], log_prob.cpu().numpy()[0], value.cpu().numpy()[0][0]
+            return action.cpu().numpy()[0].astype(np.int32), log_prob.cpu().numpy()[0], value.cpu().numpy()[0][0]
 
     def collect_trajectories(self, env) -> Tuple[float, int]:
         """
