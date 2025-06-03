@@ -548,7 +548,7 @@ class PPO:
             
             # Store transition in buffer
             self.buffer.add(
-                state=obs,
+                state=self._flatten_observation(obs),
                 action=action,
                 reward=reward,
                 value=value,
