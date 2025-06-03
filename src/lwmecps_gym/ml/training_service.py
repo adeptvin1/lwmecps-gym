@@ -257,7 +257,6 @@ class TrainingService:
                 node_info=node_info,
                 num_nodes=len(node_info),  # Use actual number of nodes
                 namespace=task.namespace,
-                deployment_name=task.deployment_name,
                 deployments=[
                     "lwmecps-testapp-server-bs1",
                     "lwmecps-testapp-server-bs2",
