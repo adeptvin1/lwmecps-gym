@@ -85,7 +85,11 @@ class TrainingService:
             model_config=task_data.get("model_config", {}),
             state=task_data.get("state", TrainingState.PENDING),
             total_episodes=task_data.get("total_episodes", 100),
-            group_id=task_data["group_id"]  # Ensure group_id is included
+            group_id=task_data["group_id"],  # Ensure group_id is included
+            namespace=task_data.get("namespace", "lwmecps-testapp"),
+            max_pods=task_data.get("max_pods", 50),
+            base_url=task_data.get("base_url", "http://34.51.182.183:8001"),
+            stabilization_time=task_data.get("stabilization_time", 10)
         )
         return await self.db.create_training_task(task)
     
@@ -257,12 +261,12 @@ class TrainingService:
                 node_info=node_info,
                 num_nodes=len(node_info),
                 namespace=task.namespace,
-                deployments=[
+                deployments=task.parameters.get("deployments", [
                     "lwmecps-testapp-server-bs1",
                     "lwmecps-testapp-server-bs2",
                     "lwmecps-testapp-server-bs3",
                     "lwmecps-testapp-server-bs4"
-                ],
+                ]),
                 max_pods=task.max_pods,
                 group_id=str(task.group_id),
                 env_config={

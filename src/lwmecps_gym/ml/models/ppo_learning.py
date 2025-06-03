@@ -74,10 +74,15 @@ class ActorCritic(nn.Module):
         action_probs, value = self(x)
         # Scale action probabilities to [0, max_replicas]
         action_probs = action_probs * self.max_replicas
-        dist = torch.distributions.Normal(action_probs, 0.1)
+        # Use uniform distribution for exploration
+        dist = torch.distributions.Uniform(
+            low=torch.zeros_like(action_probs),
+            high=torch.ones_like(action_probs) * self.max_replicas
+        )
         action = dist.sample()
-        # Clip, round, and cast to int, then ensure in range [0, max_replicas]
+        # Round to nearest integer
         action = torch.round(action).to(torch.int32)
+        # Ensure in range [0, max_replicas]
         action = torch.clamp(action, 0, self.max_replicas)
         action_float = action.float()
         log_prob = dist.log_prob(action_float).sum(dim=-1)
