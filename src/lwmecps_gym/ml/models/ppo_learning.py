@@ -540,7 +540,7 @@ class PPO:
             )
         
         for t in range(total_timesteps):
-            action = self.select_action(obs)
+            action, log_prob, value = self.select_action(obs)
             next_obs, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
             
@@ -549,8 +549,8 @@ class PPO:
                 obs=obs,
                 action=action,
                 reward=reward,
-                value=self.buffer.values[-1] if len(self.buffer.values) > 0 else 0,
-                log_prob=self.buffer.log_probs[-1] if len(self.buffer.log_probs) > 0 else 0,
+                value=value,
+                log_prob=log_prob,
                 done=done
             )
             
@@ -749,7 +749,7 @@ def main():
     done = False
     cum_reward = 0.0
     while not done:
-        action, _, _ = ppo_agent.select_action(state)
+        action, log_prob, value = ppo_agent.select_action(state)
         next_state, reward, done, info = env.step(action)
         cum_reward += reward
         state = next_state
