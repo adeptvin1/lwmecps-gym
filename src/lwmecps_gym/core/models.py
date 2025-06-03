@@ -49,9 +49,9 @@ class TrainingTask(BaseModel):
     error_message: Optional[str] = None
     model_path: Optional[str] = None
     group_id: str
-    namespace: str = "default"
-    max_pods: int = 10000
-    base_url: str = "http://localhost:8001"
+    namespace: str = "lwmecps-testapp"
+    max_pods: int = 50
+    base_url: str = "http://34.51.182.183:8001"
     stabilization_time: int = 10
 
     model_config = {
