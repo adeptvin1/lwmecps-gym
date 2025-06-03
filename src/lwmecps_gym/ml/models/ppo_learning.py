@@ -546,7 +546,7 @@ class PPO:
             
             # Store transition in buffer
             self.buffer.add(
-                obs=obs,
+                state=obs,
                 action=action,
                 reward=reward,
                 value=value,
