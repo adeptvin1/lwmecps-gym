@@ -73,12 +73,12 @@ class ActorCritic(nn.Module):
         """
         action_probs, value = self(x)
         # Scale action probabilities to max_replicas range
-        action_probs = action_probs * (self.max_replicas - 1)  # Scale to [0, max_replicas-1]
+        action_probs = action_probs * self.max_replicas  # Scale to [0, max_replicas]
         # Create normal distribution with mean from actor and fixed std
         dist = torch.distributions.Normal(action_probs, 0.1)  # Reduced std for more stable actions
         action = dist.sample()
         # Clip action to valid range and round to integers
-        action = torch.clamp(action, 0, self.max_replicas - 1)  # Ensure we don't exceed max_replicas
+        action = torch.clamp(action, 0, self.max_replicas)  # Ensure we don't exceed max_replicas
         action = torch.round(action).to(torch.int32)  # Round to nearest integer and convert to int32
         # Convert action back to float for log_prob calculation
         action_float = action.float()
