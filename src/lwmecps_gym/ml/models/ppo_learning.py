@@ -406,6 +406,8 @@ class PPO:
         accuracy = 1.0 if reward > 0 else 0.0
         
         # Calculate MSE (Mean Squared Error) between reward and value
+        if isinstance(value, np.ndarray):
+            value = value.mean()  # Convert array to scalar if needed
         mse = (reward - value) ** 2
         
         # Calculate MRE (Mean Relative Error)
