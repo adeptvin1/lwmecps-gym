@@ -3,6 +3,8 @@ import numpy as np
 from typing import Dict, List, Tuple, Union, Any
 import logging
 import time
+import re
+import bitmath
 from lwmecps_gym.envs.testapp_api import start_experiment_group, get_metrics
 from lwmecps_gym.envs.kubernetes_api import k8s
 
@@ -89,6 +91,38 @@ class LWMECPSEnv3(gym.Env):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.INFO)
         
+    def _parse_memory(self, memory_str: str) -> float:
+        """
+        Parse memory string from Kubernetes format to MB.
+        
+        Args:
+            memory_str (str): Memory string in Kubernetes format (e.g., "1Ki", "1Mi", "1Gi")
+            
+        Returns:
+            float: Memory in MB
+        """
+        try:
+            # Extract number and unit
+            match = re.match(r"(\d+)([KMG]i)", memory_str)
+            if not match:
+                raise ValueError(f"Invalid memory format: {memory_str}")
+                
+            number = int(match.group(1))
+            unit = match.group(2)
+            
+            # Convert to MB
+            if unit == "Ki":
+                return round(bitmath.KiB(number).to_MB().value)
+            elif unit == "Mi":
+                return number
+            elif unit == "Gi":
+                return round(bitmath.GiB(number).to_MB().value)
+            else:
+                raise ValueError(f"Unknown memory unit: {unit}")
+        except Exception as e:
+            self.logger.error(f"Failed to parse memory string '{memory_str}': {str(e)}")
+            raise
+
     def reset(self, seed=None, options=None) -> Tuple[Dict, Dict]:
         """Reset the environment to initial state."""
         super().reset(seed=seed)
@@ -113,7 +147,7 @@ class LWMECPSEnv3(gym.Env):
                 "nodes": {
                     node: {
                         "CPU": float(k8s_state[node]['cpu']),
-                        "RAM": float(k8s_state[node]['memory']),
+                        "RAM": self._parse_memory(k8s_state[node]['memory']),
                         "TX": NODE_NETWORK_SPEED,
                         "RX": NODE_NETWORK_SPEED,
                         "deployments": {
