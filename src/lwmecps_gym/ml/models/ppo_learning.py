@@ -80,7 +80,9 @@ class ActorCritic(nn.Module):
         # Clip action to valid range and round to integers
         action = torch.clamp(action, 0, self.max_replicas - 1)  # Ensure we don't exceed max_replicas
         action = torch.round(action).to(torch.int32)  # Round to nearest integer and convert to int32
-        log_prob = dist.log_prob(action.float()).sum(dim=-1)  # Convert back to float for log_prob calculation
+        # Convert action back to float for log_prob calculation
+        action_float = action.float()
+        log_prob = dist.log_prob(action_float).sum(dim=-1)  # Sum over action dimensions
         return action, log_prob, dist, value
 
 
