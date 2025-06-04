@@ -181,8 +181,9 @@ class TD3:
         
         return np.array(obs_vector, dtype=np.float32)
     
-    def select_action(self, state):
-        state = torch.FloatTensor(state).to(self.device)
+    def select_action(self, obs):
+        obs = self._flatten_observation(obs)  # Преобразуем словарь в последовательность
+        state = torch.FloatTensor(obs).to(self.device)
         action = self.actor(state).cpu().data.numpy()
         # Масштабируем действия из [-1, 1] в [0, 4]
         action = 2 * action + 2
