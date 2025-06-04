@@ -181,23 +181,12 @@ class TD3:
         
         return np.array(obs_vector, dtype=np.float32)
     
-    def select_action(self, obs: Union[np.ndarray, Dict], explore: bool = True) -> np.ndarray:
-        with torch.no_grad():
-            obs = self._flatten_observation(obs)
-            obs_tensor = torch.FloatTensor(obs).unsqueeze(0).to(self.device)
-            action = self.actor(obs_tensor).cpu().numpy()[0]
-            
-            if explore:
-                # Add noise to discrete actions
-                noise = np.random.randint(-1, 2, size=self.act_dim)
-                action = np.clip(action + noise, 0, self.max_replicas)
-            
-            # Validate action values
-            if not np.all((action >= 0) & (action <= self.max_replicas)):
-                logger.warning(f"Invalid action values detected: {action}. Clipping to valid range [0, {self.max_replicas}]")
-                action = np.clip(action, 0, self.max_replicas)
-            
-            return action
+    def select_action(self, state):
+        state = torch.FloatTensor(state).to(self.device)
+        action = self.actor(state).cpu().data.numpy()
+        # Масштабируем действия из [-1, 1] в [0, 4]
+        action = 2 * action + 2
+        return action
     
     def calculate_metrics(self, obs, action, reward, next_obs, info, actor_loss: Optional[float] = None, critic_loss: Optional[float] = None) -> Dict[str, float]:
         """Calculate all required metrics for the current step."""
