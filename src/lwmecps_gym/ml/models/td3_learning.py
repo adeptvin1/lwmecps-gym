@@ -349,7 +349,8 @@ class TD3:
         # Pre-fill replay buffer with random actions
         print("Pre-filling replay buffer...")
         while len(self.replay_buffer) < self.batch_size:
-            action = np.random.randint(0, self.max_replicas + 1, size=self.act_dim)
+            # Генерируем действия в диапазоне [0, 4]
+            action = np.random.randint(0, 5, size=self.act_dim)
             next_obs, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
             self.replay_buffer.append((obs, action, reward, next_obs, done))
