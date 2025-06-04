@@ -415,9 +415,17 @@ class TrainingService:
 
             # Save model
             if task.model_type == ModelType.Q_LEARNING:
-                agent.save_q_table(f"./models/q_table_{task_id}.pkl")
+                model_path = f"./models/q_table_{task_id}.pkl"
+                agent.save_q_table(model_path)
             else:
-                agent.save_model(f"./models/model_{task_id}.pth")
+                model_path = f"./models/model_{task_id}.pth"
+                agent.save_model(model_path)
+                
+            # Save model to wandb if run_id is provided
+            if task.wandb_run_id:
+                artifact = wandb.Artifact(f'{task.model_type.value}_model_{task_id}', type='model')
+                artifact.add_file(model_path)
+                wandb.log_artifact(artifact)
 
             # Update task state
             task.state = TrainingState.COMPLETED

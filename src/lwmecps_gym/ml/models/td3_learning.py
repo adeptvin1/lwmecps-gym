@@ -210,8 +210,11 @@ class TD3:
             # Calculate MRE (Mean Relative Error)
             mre = abs(reward - q_value) / (abs(reward) + 1e-6)
             
-            # Get latency from info
+            # Get metrics from info
             avg_latency = info.get("latency", 0)
+            cpu_usage = info.get("cpu_usage", 0)
+            ram_usage = info.get("ram_usage", 0)
+            network_usage = info.get("network_usage", 0)
             
             metrics = {
                 "accuracy": accuracy,
@@ -219,7 +222,10 @@ class TD3:
                 "mre": mre,
                 "avg_latency": avg_latency,
                 "total_reward": reward,
-                "q_value": q_value
+                "q_value": q_value,
+                "cpu_usage": cpu_usage,
+                "ram_usage": ram_usage,
+                "network_usage": network_usage
             }
             
             if actor_loss is not None:
@@ -340,6 +346,22 @@ class TD3:
                 }
             )
         
+        # Pre-fill replay buffer with random actions
+        print("Pre-filling replay buffer...")
+        while len(self.replay_buffer) < self.batch_size:
+            action = np.random.randint(0, self.max_replicas + 1, size=self.act_dim)
+            next_obs, reward, terminated, truncated, info = env.step(action)
+            done = terminated or truncated
+            self.replay_buffer.append((obs, action, reward, next_obs, done))
+            obs = next_obs
+            if done:
+                obs, _ = env.reset()
+        print(f"Replay buffer filled with {len(self.replay_buffer)} samples")
+        
+        obs, _ = env.reset()  # Reset environment after pre-filling
+        episode_reward = 0
+        episode_length = 0
+        
         for t in range(total_timesteps):
             action = self.select_action(obs)
             next_obs, reward, terminated, truncated, info = env.step(action)
@@ -380,6 +402,9 @@ class TD3:
                     "metrics/mre": avg_metrics.get('mre', 0),
                     "metrics/avg_latency": avg_metrics.get('avg_latency', 0),
                     "metrics/q_value": avg_metrics.get('q_value', 0),
+                    "metrics/cpu_usage": avg_metrics.get('cpu_usage', 0),
+                    "metrics/ram_usage": avg_metrics.get('ram_usage', 0),
+                    "metrics/network_usage": avg_metrics.get('network_usage', 0),
                     "losses/actor_loss": update_metrics['actor_loss'],
                     "losses/critic_loss": update_metrics['critic_loss'],
                     "losses/total_loss": update_metrics['total_loss']
@@ -395,7 +420,10 @@ class TD3:
                 f"Accuracy: {avg_metrics.get('accuracy', 0):.3f}, "
                 f"MSE: {avg_metrics.get('mse', 0):.3f}, "
                 f"MRE: {avg_metrics.get('mre', 0):.3f}, "
-                f"Avg Latency: {avg_metrics.get('avg_latency', 0):.2f}"
+                f"Avg Latency: {avg_metrics.get('avg_latency', 0):.2f}, "
+                f"CPU Usage: {avg_metrics.get('cpu_usage', 0):.2f}, "
+                f"RAM Usage: {avg_metrics.get('ram_usage', 0):.2f}, "
+                f"Network Usage: {avg_metrics.get('network_usage', 0):.2f}"
             )
             
             if done:
@@ -409,7 +437,6 @@ class TD3:
         if wandb_run_id:
             wandb.finish()
         
-        # Возвращаем результаты в формате, совместимом с SAC
         return {
             "episode_rewards": episode_metrics.get("total_reward", []),
             "episode_lengths": episode_metrics.get("steps", []),
