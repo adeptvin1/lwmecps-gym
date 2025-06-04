@@ -185,8 +185,8 @@ class TD3:
         obs = self._flatten_observation(obs)
         state = torch.FloatTensor(obs).to(self.device)
         action = self.actor(state).cpu().data.numpy().squeeze()
-        # Масштабируем действия из [-1, 1] в [0, 4]
-        action = 2 * action + 2
+        # Масштабируем действия из [-1, 1] в [0, 4] и обрезаем до допустимого диапазона
+        action = np.clip(2 * action + 2, 0, 4)
         return action
     
     def calculate_metrics(self, obs, action, reward, next_obs, info, actor_loss: Optional[float] = None, critic_loss: Optional[float] = None) -> Dict[str, float]:
