@@ -409,7 +409,16 @@ class TD3:
         if wandb_run_id:
             wandb.finish()
         
-        return episode_metrics
+        # Возвращаем результаты в формате, совместимом с SAC
+        return {
+            "episode_rewards": episode_metrics.get("total_reward", []),
+            "episode_lengths": episode_metrics.get("steps", []),
+            "actor_losses": episode_metrics.get("actor_loss", []),
+            "critic_losses": episode_metrics.get("critic_loss", []),
+            "total_losses": episode_metrics.get("total_loss", []),
+            "mean_rewards": episode_metrics.get("mean_reward", []),
+            "mean_lengths": episode_metrics.get("mean_length", [])
+        }
     
     def save_model(self, path: str):
         torch.save({
