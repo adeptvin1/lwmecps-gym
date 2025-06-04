@@ -369,36 +369,36 @@ class TD3:
             episode_reward += reward
             episode_length += 1
             
+            # Log to wandb on every step
+            if wandb_run_id:
+                wandb.log({
+                    "timesteps": t,
+                    "episode_reward": episode_reward,
+                    "episode_length": episode_length,
+                    "metrics/accuracy": avg_metrics.get('accuracy', 0),
+                    "metrics/mse": avg_metrics.get('mse', 0),
+                    "metrics/mre": avg_metrics.get('mre', 0),
+                    "metrics/avg_latency": avg_metrics.get('avg_latency', 0),
+                    "metrics/q_value": avg_metrics.get('q_value', 0),
+                    "losses/actor_loss": update_metrics['actor_loss'],
+                    "losses/critic_loss": update_metrics['critic_loss'],
+                    "losses/total_loss": update_metrics['total_loss']
+                })
+            
+            # Print episode summary
+            print(
+                f"Timesteps: {t}/{total_timesteps}, "
+                f"Episode Reward: {episode_reward:.2f}, "
+                f"Episode Length: {episode_length}, "
+                f"Actor Loss: {update_metrics['actor_loss']:.3f}, "
+                f"Critic Loss: {update_metrics['critic_loss']:.3f}, "
+                f"Accuracy: {avg_metrics.get('accuracy', 0):.3f}, "
+                f"MSE: {avg_metrics.get('mse', 0):.3f}, "
+                f"MRE: {avg_metrics.get('mre', 0):.3f}, "
+                f"Avg Latency: {avg_metrics.get('avg_latency', 0):.2f}"
+            )
+            
             if done:
-                # Log to wandb
-                if wandb_run_id:
-                    wandb.log({
-                        "timesteps": t,
-                        "episode_reward": episode_reward,
-                        "episode_length": episode_length,
-                        "metrics/accuracy": avg_metrics.get('accuracy', 0),
-                        "metrics/mse": avg_metrics.get('mse', 0),
-                        "metrics/mre": avg_metrics.get('mre', 0),
-                        "metrics/avg_latency": avg_metrics.get('avg_latency', 0),
-                        "metrics/q_value": avg_metrics.get('q_value', 0),
-                        "losses/actor_loss": update_metrics['actor_loss'],
-                        "losses/critic_loss": update_metrics['critic_loss'],
-                        "losses/total_loss": update_metrics['total_loss']
-                    })
-                
-                # Print episode summary
-                print(
-                    f"Timesteps: {t}/{total_timesteps}, "
-                    f"Episode Reward: {episode_reward:.2f}, "
-                    f"Episode Length: {episode_length}, "
-                    f"Actor Loss: {update_metrics['actor_loss']:.3f}, "
-                    f"Critic Loss: {update_metrics['critic_loss']:.3f}, "
-                    f"Accuracy: {avg_metrics.get('accuracy', 0):.3f}, "
-                    f"MSE: {avg_metrics.get('mse', 0):.3f}, "
-                    f"MRE: {avg_metrics.get('mre', 0):.3f}, "
-                    f"Avg Latency: {avg_metrics.get('avg_latency', 0):.2f}"
-                )
-                
                 # Reset episode
                 obs, _ = env.reset()
                 episode_reward = 0
