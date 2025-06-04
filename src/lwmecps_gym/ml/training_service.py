@@ -374,14 +374,17 @@ class TrainingService:
                     target_entropy=task.parameters.get("target_entropy", -1.0),
                     batch_size=task.parameters.get("batch_size", 256),
                     device=task.parameters.get("device", "cpu"),
-                    deployments=task.parameters.get("deployments", ["mec-test-app"])
+                    deployments=task.parameters.get("deployments", ["mec-test-app"]),
+                    max_replicas=task.parameters.get("max_replicas", 10)
                 )
             else:
                 raise ValueError(f"Unsupported model type: {task.model_type}")
 
             # Run training
-            if task.model_type in [ModelType.PPO, ModelType.TD3, ModelType.SAC]:
+            if task.model_type == ModelType.PPO:
                 results = agent.train(env, total_timesteps=task.total_episodes * agent.n_steps)
+            elif task.model_type in [ModelType.TD3, ModelType.SAC]:
+                results = agent.train(env, total_timesteps=task.total_episodes)
             else:
                 results = agent.train(env, task.total_episodes, wandb_run_id=task.wandb_run_id)
 
