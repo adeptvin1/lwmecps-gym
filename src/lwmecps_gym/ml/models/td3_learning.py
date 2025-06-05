@@ -360,7 +360,7 @@ class TD3:
                 obs, _ = env.reset()
         print(f"Replay buffer filled with {len(self.replay_buffer)} samples")
         
-        obs, _ = env.reset()  # Fixed missing parentheses
+        obs, _ = env.reset()  # Reset environment after pre-filling
         episode_reward = 0
         episode_length = 0
         
@@ -436,6 +436,10 @@ class TD3:
                 episode_length = 0
                 episode_count += 1  # Increment episode count
                 self.metrics_collector.reset()
+                
+                # Check if we've reached the episode limit
+                if episode_count >= total_timesteps:
+                    break
         
         # Close wandb run
         if wandb_run_id:
