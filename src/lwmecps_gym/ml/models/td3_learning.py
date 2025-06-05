@@ -364,12 +364,7 @@ class TD3:
         episode_reward = 0
         episode_length = 0
         
-        while True:  # Changed to while True since we'll break explicitly
-            # Check if we've reached the episode limit
-            if episode_count >= total_timesteps:
-                print(f"Reached episode limit of {total_timesteps}. Stopping training.")
-                break
-                
+        while True:
             action = self.select_action(obs)
             next_obs, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
@@ -441,6 +436,11 @@ class TD3:
                 episode_length = 0
                 episode_count += 1  # Increment episode count
                 self.metrics_collector.reset()
+                
+                # Check if we've reached the episode limit
+                if episode_count >= total_timesteps:
+                    print(f"Reached episode limit of {total_timesteps}. Stopping training.")
+                    break
         
         # Close wandb run
         if wandb_run_id:
