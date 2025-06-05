@@ -517,6 +517,7 @@ class PPO:
     def train(self, env, total_timesteps: int, wandb_run_id: Optional[str] = None) -> Dict[str, List[float]]:
         """Train agent."""
         timesteps_so_far = 0
+        episode_count = 0
         episode_metrics = {}
         
         # Initialize wandb if run_id is provided
@@ -526,7 +527,7 @@ class PPO:
                 project="lwmecps-gym",
                 config={
                     "algorithm": "PPO",
-                    "total_timesteps": total_timesteps,
+                    "total_episodes": total_timesteps,  # In this case, total_timesteps is actually total_episodes
                     "hidden_size": self.model.actor[0].out_features,  # Get hidden size from model
                     "learning_rate": self.optimizer.param_groups[0]['lr'],
                     "gamma": self.gamma,
@@ -541,10 +542,11 @@ class PPO:
                 }
             )
         
-        while timesteps_so_far < total_timesteps:
+        while episode_count < total_timesteps:  # total_timesteps is actually total_episodes
             # Collect trajectories
             episode_reward, episode_length = self.collect_trajectories(env)
             timesteps_so_far += episode_length
+            episode_count += 1
             
             # Update policy
             update_metrics = self.update()
@@ -564,6 +566,8 @@ class PPO:
             # Log to wandb
             if wandb_run_id:
                 wandb.log({
+                    "episode": episode_count,
+                    "total_episodes": total_timesteps,
                     "timesteps": timesteps_so_far,
                     "episode_reward": episode_reward,
                     "episode_length": episode_length,
@@ -581,7 +585,8 @@ class PPO:
             
             # Output information
             logger.info(
-                f"Timesteps: {timesteps_so_far}/{total_timesteps}, "
+                f"Episode: {episode_count}/{total_timesteps}, "  # Changed to show episode progress
+                f"Timesteps: {timesteps_so_far}, "
                 f"Episode Reward: {episode_reward:.2f}, "
                 f"Episode Length: {episode_length}, "
                 f"Actor Loss: {update_metrics['actor_loss']:.3f}, "
