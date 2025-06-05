@@ -2,6 +2,8 @@ from typing import Optional
 from pydantic_settings import BaseSettings
 import wandb
 from pathlib import Path
+import torch
+import os
 
 class WandbConfig(BaseSettings):
     """Weights & Biases configuration settings"""
@@ -41,4 +43,17 @@ def log_model(model: any, name: str) -> None:
 
 def finish_wandb() -> None:
     """Finish the current wandb run"""
-    wandb.finish() 
+    wandb.finish()
+
+def save_model(model: any, name: str, model_type: str = "model") -> None:
+    """Save model to Weights & Biases as an artifact"""
+    artifact = wandb.Artifact(name=name, type=model_type)
+    # Save model to a temporary file
+    model_path = f"{name}.pt"
+    torch.save(model.state_dict(), model_path)
+    # Add the model file to the artifact
+    artifact.add_file(model_path)
+    # Log the artifact
+    wandb.log_artifact(artifact)
+    # Clean up the temporary file
+    os.remove(model_path) 

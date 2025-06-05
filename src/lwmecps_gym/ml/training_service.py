@@ -423,9 +423,23 @@ class TrainingService:
                 
             # Save model to wandb if run_id is provided
             if task.wandb_run_id:
-                artifact = wandb.Artifact(f'{task.model_type.value}_model_{task_id}', type='model')
+                logger.info(f"Saving model to wandb for task {task_id}")
+                artifact = wandb.Artifact(
+                    name=f'{task.model_type.value}_model_{task_id}',
+                    type='model',
+                    description=f'Model trained for {task.total_episodes} episodes',
+                    metadata={
+                        'model_type': task.model_type.value,
+                        'total_episodes': task.total_episodes,
+                        'parameters': task.parameters,
+                        'env_config': task.env_config,
+                        'model_config': task.model_config,
+                        'training_metrics': task.metrics
+                    }
+                )
                 artifact.add_file(model_path)
                 wandb.log_artifact(artifact)
+                logger.info(f"Model successfully saved to wandb as artifact: {artifact.name}")
 
             # Update task state
             task.state = TrainingState.COMPLETED
