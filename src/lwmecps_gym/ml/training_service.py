@@ -150,7 +150,7 @@ class TrainingService:
             finish_wandb()
             return None
 
-    async def _run_training(self, task_id: str, task: TrainingTask):
+    def _run_training(self, task_id: str, task: TrainingTask):
         """
         Run the training process for a specific task.
         
@@ -406,7 +406,7 @@ class TrainingService:
                     }
                     if task.model_type == ModelType.SAC:
                         metrics["alpha_loss"] = results["alpha_losses"][episode]
-                    await self.save_training_result(task_id, episode, metrics)
+                    asyncio.run(self.save_training_result(task_id, episode, metrics))
             else:
                 for episode in range(task.total_episodes):
                     metrics = {
@@ -415,7 +415,7 @@ class TrainingService:
                         "epsilon": results["episode_exploration"][episode],
                         "latency": results["episode_latency"][episode]
                     }
-                    await self.save_training_result(task_id, episode, metrics)
+                    asyncio.run(self.save_training_result(task_id, episode, metrics))
 
             # Save model
             if task.model_type == ModelType.Q_LEARNING:
@@ -447,12 +447,12 @@ class TrainingService:
 
             # Update task state
             task.state = TrainingState.COMPLETED
-            await self.db.update_training_task(task_id, task.model_dump())
+            asyncio.run(self.db.update_training_task(task_id, task.model_dump()))
 
         except Exception as e:
             logger.error(f"Error in training process for task {task_id}: {str(e)}")
             task.state = TrainingState.FAILED
-            await self.db.update_training_task(task_id, task.model_dump())
+            asyncio.run(self.db.update_training_task(task_id, task.model_dump()))
             finish_wandb()
         finally:
             self.active_tasks[task_id] = False
