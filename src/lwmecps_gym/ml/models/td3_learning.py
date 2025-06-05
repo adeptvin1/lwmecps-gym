@@ -248,11 +248,18 @@ class TD3:
         
         # Sample from replay buffer
         indices = np.random.choice(len(self.replay_buffer), batch_size, replace=False)
-        obs_batch = torch.FloatTensor([self._flatten_observation(self.replay_buffer[i][0]) for i in indices]).to(self.device)
+        
+        # Convert observations to numpy arrays first, then to tensor
+        obs_batch = np.array([self._flatten_observation(self.replay_buffer[i][0]) for i in indices])
+        obs_batch = torch.FloatTensor(obs_batch).to(self.device)
+        
         act_batch = torch.FloatTensor([self.replay_buffer[i][1] for i in indices]).to(self.device)
-        rew_batch = torch.FloatTensor([self.replay_buffer[i][2] for i in indices]).to(self.device)
-        next_obs_batch = torch.FloatTensor([self._flatten_observation(self.replay_buffer[i][3]) for i in indices]).to(self.device)
-        done_batch = torch.FloatTensor([self.replay_buffer[i][4] for i in indices]).to(self.device)
+        rew_batch = torch.FloatTensor([self.replay_buffer[i][2] for i in indices]).unsqueeze(1).to(self.device)
+        
+        next_obs_batch = np.array([self._flatten_observation(self.replay_buffer[i][3]) for i in indices])
+        next_obs_batch = torch.FloatTensor(next_obs_batch).to(self.device)
+        
+        done_batch = torch.FloatTensor([self.replay_buffer[i][4] for i in indices]).unsqueeze(1).to(self.device)
         
         # Update critics
         with torch.no_grad():
