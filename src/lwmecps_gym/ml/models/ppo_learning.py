@@ -515,94 +515,157 @@ class PPO:
         }
 
     def train(self, env, total_timesteps: int, wandb_run_id: Optional[str] = None) -> Dict[str, List[float]]:
-        """Train agent."""
-        timesteps_so_far = 0
+        """
+        Train the PPO agent.
+        
+        Args:
+            env: The environment to train in
+            total_timesteps: Total number of timesteps to train for
+            wandb_run_id: Optional Weights & Biases run ID for logging
+            
+        Returns:
+            Dictionary containing training metrics
+        """
+        # Initialize metrics
+        metrics = {
+            "episode_rewards": [],
+            "episode_lengths": [],
+            "actor_losses": [],
+            "critic_losses": [],
+            "accuracies": [],
+            "mses": [],
+            "mres": [],
+            "avg_latencies": [],
+            "cpu_usages": [],
+            "ram_usages": [],
+            "network_usages": []
+        }
+        
+        # Initialize episode counter
         episode_count = 0
-        episode_metrics = {}
+        episode_reward = 0
+        episode_length = 0
+        episode_actor_loss = 0
+        episode_critic_loss = 0
+        episode_accuracy = 0
+        episode_mse = 0
+        episode_mre = 0
+        episode_avg_latency = 0
+        episode_cpu_usage = 0
+        episode_ram_usage = 0
+        episode_network_usage = 0
         
-        # Initialize wandb if run_id is provided
-        if wandb_run_id:
-            wandb.init(
-                id=wandb_run_id,
-                project="lwmecps-gym",
-                config={
-                    "algorithm": "PPO",
-                    "total_episodes": total_timesteps,  # In this case, total_timesteps is actually total_episodes
-                    "hidden_size": self.model.actor[0].out_features,  # Get hidden size from model
-                    "learning_rate": self.optimizer.param_groups[0]['lr'],
-                    "gamma": self.gamma,
-                    "lam": self.lam,
-                    "clip_eps": self.clip_eps,
-                    "ent_coef": self.ent_coef,
-                    "vf_coef": self.vf_coef,
-                    "n_steps": self.n_steps,
-                    "batch_size": self.batch_size,
-                    "n_epochs": self.n_epochs,
-                    "max_replicas": self.max_replicas
-                }
-            )
+        # Training loop
+        state, _ = env.reset()
+        episode_count = 0
         
-        while episode_count < total_timesteps:  # total_timesteps is actually total_episodes
-            # Collect trajectories
-            episode_reward, episode_length = self.collect_trajectories(env)
-            timesteps_so_far += episode_length
+        while True:  # Changed to while True since we'll break explicitly
+            if episode_count >= total_timesteps:
+                print(f"Reached episode limit of {total_timesteps}. Stopping training.")
+                break
+                
+            # Reset episode metrics
+            episode_reward = 0
+            episode_length = 0
+            episode_actor_loss = 0
+            episode_critic_loss = 0
+            episode_accuracy = 0
+            episode_mse = 0
+            episode_mre = 0
+            episode_avg_latency = 0
+            episode_cpu_usage = 0
+            episode_ram_usage = 0
+            episode_network_usage = 0
+            
+            # Episode loop
+            done = False
+            truncated = False
+            max_steps_per_episode = 10  # Added max steps per episode
+            
+            while not (done or truncated) and episode_length < max_steps_per_episode:  # Added episode length check
+                # Select action
+                action, value, log_prob = self.select_action(state)
+                
+                # Execute action
+                next_state, reward, done, truncated, info = env.step(action)
+                
+                # Update state
+                state = next_state
+                
+                # Update episode metrics
+                episode_reward += reward
+                episode_length += 1
+                
+                # Update resource usage metrics
+                if 'avg_latency' in info:
+                    episode_avg_latency += info['avg_latency']
+                if 'cpu_usage' in info:
+                    episode_cpu_usage += info['cpu_usage']
+                if 'ram_usage' in info:
+                    episode_ram_usage += info['ram_usage']
+                if 'network_usage' in info:
+                    episode_network_usage += info['network_usage']
+                
+                # Train agent if enough samples
+                if len(self.replay_buffer) > self.batch_size:
+                    actor_loss, critic_loss = self.update()
+                    episode_actor_loss += actor_loss
+                    episode_critic_loss += critic_loss
+                    episode_accuracy += self.calculate_metrics(state, action, reward, value, log_prob, info)['accuracy']
+                    episode_mse += self.calculate_metrics(state, action, reward, value, log_prob, info)['mse']
+                    episode_mre += self.calculate_metrics(state, action, reward, value, log_prob, info)['mre']
+                
+                # Log metrics to wandb if run_id is provided
+                if wandb_run_id:
+                    wandb.log({
+                        "episode": episode_count,
+                        "step": episode_length,
+                        "reward": reward,
+                        "actor_loss": episode_actor_loss / (episode_length + 1e-8),
+                        "critic_loss": episode_critic_loss / (episode_length + 1e-8),
+                        "accuracy": episode_accuracy / (episode_length + 1e-8),
+                        "mse": episode_mse / (episode_length + 1e-8),
+                        "mre": episode_mre / (episode_length + 1e-8),
+                        "avg_latency": episode_avg_latency / (episode_length + 1e-8),
+                        "cpu_usage": episode_cpu_usage / (episode_length + 1e-8),
+                        "ram_usage": episode_ram_usage / (episode_length + 1e-8),
+                        "network_usage": episode_network_usage / (episode_length + 1e-8)
+                    })
+            
+            # Increment episode counter
             episode_count += 1
             
-            # Update policy
-            update_metrics = self.update()
+            # Store episode metrics
+            metrics["episode_rewards"].append(episode_reward)
+            metrics["episode_lengths"].append(episode_length)
+            metrics["actor_losses"].append(episode_actor_loss / (episode_length + 1e-8))
+            metrics["critic_losses"].append(episode_critic_loss / (episode_length + 1e-8))
+            metrics["accuracies"].append(episode_accuracy / (episode_length + 1e-8))
+            metrics["mses"].append(episode_mse / (episode_length + 1e-8))
+            metrics["mres"].append(episode_mre / (episode_length + 1e-8))
+            metrics["avg_latencies"].append(episode_avg_latency / (episode_length + 1e-8))
+            metrics["cpu_usages"].append(episode_cpu_usage / (episode_length + 1e-8))
+            metrics["ram_usages"].append(episode_ram_usage / (episode_length + 1e-8))
+            metrics["network_usages"].append(episode_network_usage / (episode_length + 1e-8))
             
-            # Get average metrics
-            avg_metrics = self.metrics_collector.get_average_metrics()
+            # Print episode summary
+            print(f"Episode: {episode_count}/{total_timesteps}, "
+                  f"Episode Reward: {episode_reward:.2f}, "
+                  f"Episode Length: {episode_length}, "
+                  f"Actor Loss: {episode_actor_loss/(episode_length + 1e-8):.3f}, "
+                  f"Critic Loss: {episode_critic_loss/(episode_length + 1e-8):.3f}, "
+                  f"Accuracy: {episode_accuracy/(episode_length + 1e-8):.3f}, "
+                  f"MSE: {episode_mse/(episode_length + 1e-8):.3f}, "
+                  f"MRE: {episode_mre/(episode_length + 1e-8):.3f}, "
+                  f"Avg Latency: {episode_avg_latency/(episode_length + 1e-8):.2f}, "
+                  f"CPU Usage: {episode_cpu_usage/(episode_length + 1e-8):.2f}, "
+                  f"RAM Usage: {episode_ram_usage/(episode_length + 1e-8):.2f}, "
+                  f"Network Usage: {episode_network_usage/(episode_length + 1e-8):.2f}")
             
-            # Combine all metrics
-            all_metrics = {**avg_metrics, **update_metrics}
-            
-            # Save metrics
-            for key, value in all_metrics.items():
-                if key not in episode_metrics:
-                    episode_metrics[key] = []
-                episode_metrics[key].append(value)
-            
-            # Log to wandb
-            if wandb_run_id:
-                wandb.log({
-                    "episode": episode_count,
-                    "total_episodes": total_timesteps,
-                    "timesteps": timesteps_so_far,
-                    "episode_reward": episode_reward,
-                    "episode_length": episode_length,
-                    "metrics/accuracy": avg_metrics.get('accuracy', 0),
-                    "metrics/mse": avg_metrics.get('mse', 0),
-                    "metrics/mre": avg_metrics.get('mre', 0),
-                    "metrics/avg_latency": avg_metrics.get('avg_latency', 0),
-                    "metrics/value": avg_metrics.get('value', 0),
-                    "metrics/log_prob": avg_metrics.get('log_prob', 0),
-                    "losses/policy_loss": update_metrics['actor_loss'],
-                    "losses/value_loss": update_metrics['critic_loss'],
-                    "losses/entropy_loss": update_metrics['entropy'],
-                    "losses/total_loss": update_metrics['actor_loss'] + self.vf_coef * update_metrics['critic_loss'] - self.ent_coef * update_metrics['entropy']
-                })
-            
-            # Output information
-            logger.info(
-                f"Episode: {episode_count}/{total_timesteps}, "  # Changed to show episode progress
-                f"Timesteps: {timesteps_so_far}, "
-                f"Episode Reward: {episode_reward:.2f}, "
-                f"Episode Length: {episode_length}, "
-                f"Actor Loss: {update_metrics['actor_loss']:.3f}, "
-                f"Critic Loss: {update_metrics['critic_loss']:.3f}, "
-                f"Entropy: {update_metrics['entropy']:.3f}, "
-                f"Accuracy: {avg_metrics.get('accuracy', 0):.3f}, "
-                f"MSE: {avg_metrics.get('mse', 0):.3f}, "
-                f"MRE: {avg_metrics.get('mre', 0):.3f}, "
-                f"Avg Latency: {avg_metrics.get('avg_latency', 0):.2f}"
-            )
+            # Reset environment for next episode
+            state, _ = env.reset()
         
-        # Close wandb run
-        if wandb_run_id:
-            wandb.finish()
-        
-        return episode_metrics
+        return metrics
 
     def save_model(self, path: str):
         """
