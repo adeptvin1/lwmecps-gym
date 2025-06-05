@@ -24,6 +24,8 @@ import bitmath
 from lwmecps_gym.envs.kubernetes_api import k8s
 import uuid
 from bson.objectid import ObjectId
+import concurrent.futures
+import asyncio
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -137,7 +139,9 @@ class TrainingService:
             
             # Mark task as active and start training process
             self.active_tasks[task_id] = True
-            await self._run_training(task_id, task)
+            loop = asyncio.get_running_loop()
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                await loop.run_in_executor(pool, self._run_training, task_id, task)
             
             return task
             

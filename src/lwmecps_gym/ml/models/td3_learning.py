@@ -365,6 +365,8 @@ class TD3:
         episode_length = 0
         
         while True:
+            if episode_length == 0:
+                logger.info(f"Starting episode {episode_count + 1} of {total_timesteps}")
             action = self.select_action(obs)
             next_obs, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
