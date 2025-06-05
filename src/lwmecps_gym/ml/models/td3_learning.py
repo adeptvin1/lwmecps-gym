@@ -344,17 +344,17 @@ class TD3:
         
         # Initialize episode counter
         episode_count = 0
-        episode_reward = 0
+        episode_reward = 0.0
         episode_length = 0
-        episode_actor_loss = 0
-        episode_critic_loss = 0
-        episode_accuracy = 0
-        episode_mse = 0
-        episode_mre = 0
-        episode_avg_latency = 0
-        episode_cpu_usage = 0
-        episode_ram_usage = 0
-        episode_network_usage = 0
+        episode_actor_loss = 0.0
+        episode_critic_loss = 0.0
+        episode_accuracy = 0.0
+        episode_mse = 0.0
+        episode_mre = 0.0
+        episode_avg_latency = 0.0
+        episode_cpu_usage = 0.0
+        episode_ram_usage = 0.0
+        episode_network_usage = 0.0
         
         # Pre-fill replay buffer with random actions
         print("Pre-filling replay buffer...")
@@ -362,7 +362,7 @@ class TD3:
         for _ in range(self.batch_size):
             action = env.action_space.sample()
             next_state, reward, done, _, info = env.step(action)
-            self.replay_buffer.append((state, action, reward, next_state, done))
+            self.replay_buffer.append((state, action, float(reward), next_state, done))
             state = next_state
             if done:
                 state, _ = env.reset()
@@ -378,17 +378,17 @@ class TD3:
                 break
                 
             # Reset episode metrics
-            episode_reward = 0
+            episode_reward = 0.0
             episode_length = 0
-            episode_actor_loss = 0
-            episode_critic_loss = 0
-            episode_accuracy = 0
-            episode_mse = 0
-            episode_mre = 0
-            episode_avg_latency = 0
-            episode_cpu_usage = 0
-            episode_ram_usage = 0
-            episode_network_usage = 0
+            episode_actor_loss = 0.0
+            episode_critic_loss = 0.0
+            episode_accuracy = 0.0
+            episode_mse = 0.0
+            episode_mre = 0.0
+            episode_avg_latency = 0.0
+            episode_cpu_usage = 0.0
+            episode_ram_usage = 0.0
+            episode_network_usage = 0.0
             
             # Episode loop
             done = False
@@ -403,7 +403,7 @@ class TD3:
                 next_state, reward, done, truncated, info = env.step(action)
                 
                 # Store transition in replay buffer
-                self.replay_buffer.append((state, action, reward, next_state, done))
+                self.replay_buffer.append((state, action, float(reward), next_state, done))
                 if len(self.replay_buffer) > self.max_buffer_size:
                     self.replay_buffer.pop(0)
                 
@@ -411,74 +411,76 @@ class TD3:
                 state = next_state
                 
                 # Update episode metrics
-                episode_reward += reward
+                episode_reward += float(reward)
                 episode_length += 1
                 
                 # Update resource usage metrics
                 if 'avg_latency' in info:
-                    episode_avg_latency += info['avg_latency']
+                    episode_avg_latency += float(info['avg_latency'])
                 if 'cpu_usage' in info:
-                    episode_cpu_usage += info['cpu_usage']
+                    episode_cpu_usage += float(info['cpu_usage'])
                 if 'ram_usage' in info:
-                    episode_ram_usage += info['ram_usage']
+                    episode_ram_usage += float(info['ram_usage'])
                 if 'network_usage' in info:
-                    episode_network_usage += info['network_usage']
+                    episode_network_usage += float(info['network_usage'])
                 
                 # Train agent if enough samples
                 if len(self.replay_buffer) > self.batch_size:
-                    actor_loss, critic_loss, total_loss = self.update()
-                    episode_actor_loss += actor_loss
-                    episode_critic_loss += critic_loss
-                    episode_accuracy += self.calculate_metrics(state, action, reward, next_state, info)['accuracy']
-                    episode_mse += self.calculate_metrics(state, action, reward, next_state, info)['mse']
-                    episode_mre += self.calculate_metrics(state, action, reward, next_state, info)['mre']
+                    update_metrics = self.update()
+                    episode_actor_loss += float(update_metrics['actor_loss'])
+                    episode_critic_loss += float(update_metrics['critic_loss'])
+                    
+                    step_metrics = self.calculate_metrics(state, action, reward, next_state, info)
+                    episode_accuracy += float(step_metrics['accuracy'])
+                    episode_mse += float(step_metrics['mse'])
+                    episode_mre += float(step_metrics['mre'])
                 
                 # Log metrics to wandb if run_id is provided
                 if wandb_run_id:
                     wandb.log({
                         "episode": episode_count,
                         "step": episode_length,
-                        "reward": reward,
-                        "actor_loss": episode_actor_loss / (episode_length + 1e-8),
-                        "critic_loss": episode_critic_loss / (episode_length + 1e-8),
-                        "accuracy": episode_accuracy / (episode_length + 1e-8),
-                        "mse": episode_mse / (episode_length + 1e-8),
-                        "mre": episode_mre / (episode_length + 1e-8),
-                        "avg_latency": episode_avg_latency / (episode_length + 1e-8),
-                        "cpu_usage": episode_cpu_usage / (episode_length + 1e-8),
-                        "ram_usage": episode_ram_usage / (episode_length + 1e-8),
-                        "network_usage": episode_network_usage / (episode_length + 1e-8)
+                        "reward": float(reward),
+                        "actor_loss": float(episode_actor_loss) / (episode_length + 1e-8),
+                        "critic_loss": float(episode_critic_loss) / (episode_length + 1e-8),
+                        "accuracy": float(episode_accuracy) / (episode_length + 1e-8),
+                        "mse": float(episode_mse) / (episode_length + 1e-8),
+                        "mre": float(episode_mre) / (episode_length + 1e-8),
+                        "avg_latency": float(episode_avg_latency) / (episode_length + 1e-8),
+                        "cpu_usage": float(episode_cpu_usage) / (episode_length + 1e-8),
+                        "ram_usage": float(episode_ram_usage) / (episode_length + 1e-8),
+                        "network_usage": float(episode_network_usage) / (episode_length + 1e-8)
                     })
             
             # Increment episode counter
             episode_count += 1
             
             # Store episode metrics
-            metrics["episode_rewards"].append(episode_reward)
+            metrics["episode_rewards"].append(float(episode_reward))
             metrics["episode_lengths"].append(episode_length)
-            metrics["actor_losses"].append(episode_actor_loss / (episode_length + 1e-8))
-            metrics["critic_losses"].append(episode_critic_loss / (episode_length + 1e-8))
-            metrics["accuracies"].append(episode_accuracy / (episode_length + 1e-8))
-            metrics["mses"].append(episode_mse / (episode_length + 1e-8))
-            metrics["mres"].append(episode_mre / (episode_length + 1e-8))
-            metrics["avg_latencies"].append(episode_avg_latency / (episode_length + 1e-8))
-            metrics["cpu_usages"].append(episode_cpu_usage / (episode_length + 1e-8))
-            metrics["ram_usages"].append(episode_ram_usage / (episode_length + 1e-8))
-            metrics["network_usages"].append(episode_network_usage / (episode_length + 1e-8))
+            metrics["actor_losses"].append(float(episode_actor_loss) / (episode_length + 1e-8))
+            metrics["critic_losses"].append(float(episode_critic_loss) / (episode_length + 1e-8))
+            metrics["accuracies"].append(float(episode_accuracy) / (episode_length + 1e-8))
+            metrics["mses"].append(float(episode_mse) / (episode_length + 1e-8))
+            metrics["mres"].append(float(episode_mre) / (episode_length + 1e-8))
+            metrics["avg_latencies"].append(float(episode_avg_latency) / (episode_length + 1e-8))
+            metrics["cpu_usages"].append(float(episode_cpu_usage) / (episode_length + 1e-8))
+            metrics["ram_usages"].append(float(episode_ram_usage) / (episode_length + 1e-8))
+            metrics["network_usages"].append(float(episode_network_usage) / (episode_length + 1e-8))
             
             # Print episode summary
             print(f"Episode: {episode_count}/{total_timesteps}, "
-                  f"Episode Reward: {episode_reward:.2f}, "
+                  f"Episode Reward: {float(episode_reward):.2f}, "
                   f"Episode Length: {episode_length}, "
-                  f"Actor Loss: {episode_actor_loss/(episode_length + 1e-8):.3f}, "
-                  f"Critic Loss: {episode_critic_loss/(episode_length + 1e-8):.3f}, "
-                  f"Accuracy: {episode_accuracy/(episode_length + 1e-8):.3f}, "
-                  f"MSE: {episode_mse/(episode_length + 1e-8):.3f}, "
-                  f"MRE: {episode_mre/(episode_length + 1e-8):.3f}, "
-                  f"Avg Latency: {episode_avg_latency/(episode_length + 1e-8):.2f}, "
-                  f"CPU Usage: {episode_cpu_usage/(episode_length + 1e-8):.2f}, "
-                  f"RAM Usage: {episode_ram_usage/(episode_length + 1e-8):.2f}, "
-                  f"Network Usage: {episode_network_usage/(episode_length + 1e-8):.2f}")
+                  f"Actor Loss: {float(episode_actor_loss)/(episode_length + 1e-8):.3f}, "
+                  f"Critic Loss: {float(episode_critic_loss)/(episode_length + 1e-8):.3f}, "
+                  f"Accuracy: {float(episode_accuracy)/(episode_length + 1e-8):.3f}, "
+                  f"MSE: {float(episode_mse)/(episode_length + 1e-8):.3f}, "
+                  f"MRE: {float(episode_mre)/(episode_length + 1e-8):.3f}, "
+                  f"Avg Latency: {float(episode_avg_latency)/(episode_length + 1e-8):.2f}, "
+                  f"CPU Usage: {float(episode_cpu_usage)/(episode_length + 1e-8):.2f}, "
+                  f"RAM Usage: {float(episode_ram_usage)/(episode_length + 1e-8):.2f}, "
+                  f"Network Usage: {float(episode_network_usage)/(episode_length + 1e-8):.2f}")
             
             # Reset environment for next episode
             state, _ = env.reset()
