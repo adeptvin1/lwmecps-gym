@@ -384,7 +384,7 @@ class TrainingService:
             if task.model_type == ModelType.PPO:
                 results = agent.train(env, total_timesteps=task.total_episodes, wandb_run_id=task.wandb_run_id)
             elif task.model_type in [ModelType.TD3, ModelType.SAC]:
-                results = agent.train(env, total_timesteps=task.total_episodes)
+                results = agent.train(env, total_timesteps=task.total_episodes, wandb_run_id=task.wandb_run_id)
             else:
                 results = agent.train(env, task.total_episodes, wandb_run_id=task.wandb_run_id)
 

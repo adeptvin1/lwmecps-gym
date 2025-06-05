@@ -439,6 +439,7 @@ class TD3:
                 
                 # Check if we've reached the episode limit
                 if episode_count >= total_timesteps:
+                    print(f"Reached episode limit of {total_timesteps}. Stopping training.")
                     break
         
         # Close wandb run
