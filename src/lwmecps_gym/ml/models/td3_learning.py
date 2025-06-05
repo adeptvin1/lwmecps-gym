@@ -197,31 +197,31 @@ class TD3:
             action_tensor = torch.FloatTensor(action).unsqueeze(0).to(self.device)
             
             # Get Q-values from both critics
-            q1 = self.critic1(obs_tensor, action_tensor).item()
-            q2 = self.critic2(obs_tensor, action_tensor).item()
+            q1 = float(self.critic1(obs_tensor, action_tensor).item())
+            q2 = float(self.critic2(obs_tensor, action_tensor).item())
             q_value = min(q1, q2)
             
             # Calculate accuracy (1 if reward is positive, 0 otherwise)
-            accuracy = 1.0 if reward > 0 else 0.0
+            accuracy = 1.0 if float(reward) > 0 else 0.0
             
             # Calculate MSE (Mean Squared Error)
-            mse = (reward - q_value) ** 2
+            mse = float((reward - q_value) ** 2)
             
             # Calculate MRE (Mean Relative Error)
-            mre = abs(reward - q_value) / (abs(reward) + 1e-6)
+            mre = float(abs(reward - q_value) / (abs(reward) + 1e-6))
             
             # Get metrics from info
-            avg_latency = info.get("latency", 0)
-            cpu_usage = info.get("cpu_usage", 0)
-            ram_usage = info.get("ram_usage", 0)
-            network_usage = info.get("network_usage", 0)
+            avg_latency = float(info.get("latency", 0))
+            cpu_usage = float(info.get("cpu_usage", 0))
+            ram_usage = float(info.get("ram_usage", 0))
+            network_usage = float(info.get("network_usage", 0))
             
             metrics = {
                 "accuracy": accuracy,
                 "mse": mse,
                 "mre": mre,
                 "avg_latency": avg_latency,
-                "total_reward": reward,
+                "total_reward": float(reward),
                 "q_value": q_value,
                 "cpu_usage": cpu_usage,
                 "ram_usage": ram_usage,
@@ -229,9 +229,9 @@ class TD3:
             }
             
             if actor_loss is not None:
-                metrics["actor_loss"] = actor_loss
+                metrics["actor_loss"] = float(actor_loss)
             if critic_loss is not None:
-                metrics["critic_loss"] = critic_loss
+                metrics["critic_loss"] = float(critic_loss)
                 
             return metrics
 
@@ -253,13 +253,19 @@ class TD3:
         obs_batch = np.array([self._flatten_observation(self.replay_buffer[i][0]) for i in indices])
         obs_batch = torch.FloatTensor(obs_batch).to(self.device)
         
-        act_batch = torch.FloatTensor([self.replay_buffer[i][1] for i in indices]).to(self.device)
-        rew_batch = torch.FloatTensor([self.replay_buffer[i][2] for i in indices]).unsqueeze(1).to(self.device)
+        # Convert actions to numpy array first
+        act_batch = np.array([self.replay_buffer[i][1] for i in indices])
+        act_batch = torch.FloatTensor(act_batch).to(self.device)
+        
+        # Convert rewards and done flags to numpy arrays first
+        rew_batch = np.array([float(self.replay_buffer[i][2]) for i in indices])
+        rew_batch = torch.FloatTensor(rew_batch).unsqueeze(1).to(self.device)
         
         next_obs_batch = np.array([self._flatten_observation(self.replay_buffer[i][3]) for i in indices])
         next_obs_batch = torch.FloatTensor(next_obs_batch).to(self.device)
         
-        done_batch = torch.FloatTensor([self.replay_buffer[i][4] for i in indices]).unsqueeze(1).to(self.device)
+        done_batch = np.array([float(self.replay_buffer[i][4]) for i in indices])
+        done_batch = torch.FloatTensor(done_batch).unsqueeze(1).to(self.device)
         
         # Update critics
         with torch.no_grad():
