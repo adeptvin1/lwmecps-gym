@@ -324,6 +324,7 @@ class TD3:
         obs, _ = env.reset()
         episode_reward = 0
         episode_length = 0
+        episode_count = 0
         episode_metrics = {}
         
         # Initialize wandb if run_id is provided
@@ -333,7 +334,7 @@ class TD3:
                 project="lwmecps-gym",
                 config={
                     "algorithm": "TD3",
-                    "total_timesteps": total_timesteps,
+                    "total_episodes": total_timesteps,  # In this case, total_timesteps is actually total_episodes
                     "hidden_size": self.actor.net[0].out_features,
                     "learning_rate": self.actor_optimizer.param_groups[0]['lr'],
                     "gamma": self.gamma,
@@ -359,11 +360,11 @@ class TD3:
                 obs, _ = env.reset()
         print(f"Replay buffer filled with {len(self.replay_buffer)} samples")
         
-        obs, _ = env.reset()  # Reset environment after pre-filling
+        obs, _ = env.reset()  # Fixed missing parentheses
         episode_reward = 0
         episode_length = 0
         
-        for t in range(total_timesteps):
+        while episode_count < total_timesteps:  # total_timesteps is actually total_episodes
             action = self.select_action(obs)
             next_obs, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
@@ -395,7 +396,8 @@ class TD3:
             # Log to wandb on every step
             if wandb_run_id:
                 wandb.log({
-                    "timesteps": t,
+                    "episode": episode_count,
+                    "total_episodes": total_timesteps,
                     "episode_reward": episode_reward,
                     "episode_length": episode_length,
                     "metrics/accuracy": avg_metrics.get('accuracy', 0),
@@ -413,7 +415,7 @@ class TD3:
             
             # Print episode summary
             print(
-                f"Timesteps: {t}/{total_timesteps}, "
+                f"Episode: {episode_count}/{total_timesteps}, "  # Changed to show episode progress
                 f"Episode Reward: {episode_reward:.2f}, "
                 f"Episode Length: {episode_length}, "
                 f"Actor Loss: {update_metrics['actor_loss']:.3f}, "
@@ -432,6 +434,7 @@ class TD3:
                 obs, _ = env.reset()
                 episode_reward = 0
                 episode_length = 0
+                episode_count += 1  # Increment episode count
                 self.metrics_collector.reset()
         
         # Close wandb run

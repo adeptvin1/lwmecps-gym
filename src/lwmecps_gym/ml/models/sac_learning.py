@@ -363,6 +363,7 @@ class SAC:
         obs, _ = env.reset()
         episode_reward = 0
         episode_length = 0
+        episode_count = 0
         episode_metrics = {}
         
         # Initialize wandb if run_id is provided
@@ -372,7 +373,7 @@ class SAC:
                 project="lwmecps-gym",
                 config={
                     "algorithm": "SAC",
-                    "total_timesteps": total_timesteps,
+                    "total_episodes": total_timesteps,
                     "hidden_size": self.actor.net[0].out_features,
                     "learning_rate": self.actor_optimizer.param_groups[0]['lr'],
                     "gamma": self.gamma,
@@ -384,7 +385,7 @@ class SAC:
                 }
             )
         
-        for t in range(total_timesteps):
+        while episode_count < total_timesteps:
             action = self.select_action(obs)
             next_obs, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
@@ -417,7 +418,8 @@ class SAC:
                 # Log to wandb
                 if wandb_run_id:
                     wandb.log({
-                        "timesteps": t,
+                        "episode": episode_count,
+                        "total_episodes": total_timesteps,
                         "episode_reward": episode_reward,
                         "episode_length": episode_length,
                         "metrics/accuracy": avg_metrics.get('accuracy', 0),
@@ -435,7 +437,7 @@ class SAC:
                 
                 # Print episode summary
                 print(
-                    f"Timesteps: {t}/{total_timesteps}, "
+                    f"Episode: {episode_count}/{total_timesteps}, "
                     f"Episode Reward: {episode_reward:.2f}, "
                     f"Episode Length: {episode_length}, "
                     f"Actor Loss: {update_metrics['actor_loss']:.3f}, "
@@ -451,6 +453,7 @@ class SAC:
                 obs, _ = env.reset()
                 episode_reward = 0
                 episode_length = 0
+                episode_count += 1
                 self.metrics_collector.reset()
         
         # Close wandb run
