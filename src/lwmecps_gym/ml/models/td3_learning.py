@@ -248,30 +248,17 @@ class TD3:
         
         # Sample from replay buffer
         indices = np.random.choice(len(self.replay_buffer), batch_size, replace=False)
-        
-        # Оптимизированное создание тензоров
-        obs_batch = np.array([self._flatten_observation(self.replay_buffer[i][0]) for i in indices])
-        act_batch = np.array([self.replay_buffer[i][1] for i in indices])
-        rew_batch = np.array([self.replay_buffer[i][2] for i in indices])
-        next_obs_batch = np.array([self._flatten_observation(self.replay_buffer[i][3]) for i in indices])
-        done_batch = np.array([self.replay_buffer[i][4] for i in indices])
-        
-        # Конвертируем в тензоры
-        obs_batch = torch.FloatTensor(obs_batch).to(self.device)
-        act_batch = torch.FloatTensor(act_batch).to(self.device)
-        rew_batch = torch.FloatTensor(rew_batch).unsqueeze(1).to(self.device)  # [batch_size, 1]
-        next_obs_batch = torch.FloatTensor(next_obs_batch).to(self.device)
-        done_batch = torch.FloatTensor(done_batch).unsqueeze(1).to(self.device)  # [batch_size, 1]
+        obs_batch = torch.FloatTensor([self._flatten_observation(self.replay_buffer[i][0]) for i in indices]).to(self.device)
+        act_batch = torch.FloatTensor([self.replay_buffer[i][1] for i in indices]).to(self.device)
+        rew_batch = torch.FloatTensor([self.replay_buffer[i][2] for i in indices]).to(self.device)
+        next_obs_batch = torch.FloatTensor([self._flatten_observation(self.replay_buffer[i][3]) for i in indices]).to(self.device)
+        done_batch = torch.FloatTensor([self.replay_buffer[i][4] for i in indices]).to(self.device)
         
         # Update critics
         with torch.no_grad():
-            # Add noise to target actions
-            noise = torch.randint(-1, 2, size=(batch_size, self.act_dim), device=self.device)
             next_actions = self.actor_target(next_obs_batch)
-            next_actions = torch.clamp(next_actions + noise, 0, self.max_replicas)
-            
-            target_q1 = self.critic1_target(next_obs_batch, next_actions.float())
-            target_q2 = self.critic2_target(next_obs_batch, next_actions.float())
+            target_q1 = self.critic1_target(next_obs_batch, next_actions)
+            target_q2 = self.critic2_target(next_obs_batch, next_actions)
             target_q = torch.min(target_q1, target_q2)
             target_q = rew_batch + (1 - done_batch) * self.gamma * target_q
         
@@ -289,27 +276,26 @@ class TD3:
         critic2_loss.backward()
         self.critic2_optimizer.step()
         
-        actor_loss = torch.tensor(0.0, device=self.device)
-        if len(self.replay_buffer) % self.policy_delay == 0:
-            # Update actor
-            actor_loss = -self.critic1(obs_batch, self.actor(obs_batch).float()).mean()
-            
-            self.actor_optimizer.zero_grad()
-            actor_loss.backward()
-            self.actor_optimizer.step()
-            
-            # Update target networks
-            for param, target_param in zip(self.actor.parameters(), self.actor_target.parameters()):
-                target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
-            
-            for param, target_param in zip(self.critic1.parameters(), self.critic1_target.parameters()):
-                target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
-            
-            for param, target_param in zip(self.critic2.parameters(), self.critic2_target.parameters()):
-                target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+        # Update actor
+        actor_loss = -self.critic1(obs_batch, self.actor(obs_batch)).mean()
+        
+        self.actor_optimizer.zero_grad()
+        actor_loss.backward()
+        self.actor_optimizer.step()
+        
+        # Update target networks
+        for param, target_param in zip(self.actor.parameters(), self.actor_target.parameters()):
+            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+        
+        for param, target_param in zip(self.critic1.parameters(), self.critic1_target.parameters()):
+            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+        
+        for param, target_param in zip(self.critic2.parameters(), self.critic2_target.parameters()):
+            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
         
         total_loss = actor_loss + critic1_loss + critic2_loss
         
+        # Convert all tensors to Python floats
         return {
             "actor_loss": float(actor_loss.detach().cpu().numpy()),
             "critic_loss": float((critic1_loss + critic2_loss).detach().cpu().numpy() / 2),
