@@ -139,9 +139,18 @@ class TrainingService:
             
             # Mark task as active and start training process
             self.active_tasks[task_id] = True
+            
+            # Запускаем обучение в отдельном потоке
             loop = asyncio.get_running_loop()
             with concurrent.futures.ThreadPoolExecutor() as pool:
-                await loop.run_in_executor(pool, self._run_training, task_id, task)
+                try:
+                    await loop.run_in_executor(pool, self._run_training, task_id, task)
+                except Exception as e:
+                    logger.error(f"Error in training process: {str(e)}")
+                    task.state = TrainingState.FAILED
+                    await self.db.update_training_task(task_id, task.model_dump())
+                    finish_wandb()
+                    return None
             
             return task
             

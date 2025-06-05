@@ -248,11 +248,20 @@ class TD3:
         
         # Sample from replay buffer
         indices = np.random.choice(len(self.replay_buffer), batch_size, replace=False)
-        obs_batch = torch.FloatTensor([self._flatten_observation(self.replay_buffer[i][0]) for i in indices]).to(self.device)
-        act_batch = torch.FloatTensor([self.replay_buffer[i][1] for i in indices]).to(self.device)
-        rew_batch = torch.FloatTensor([self.replay_buffer[i][2] for i in indices]).to(self.device)
-        next_obs_batch = torch.FloatTensor([self._flatten_observation(self.replay_buffer[i][3]) for i in indices]).to(self.device)
-        done_batch = torch.FloatTensor([self.replay_buffer[i][4] for i in indices]).to(self.device)
+        
+        # Оптимизированное создание тензоров
+        obs_batch = np.array([self._flatten_observation(self.replay_buffer[i][0]) for i in indices])
+        act_batch = np.array([self.replay_buffer[i][1] for i in indices])
+        rew_batch = np.array([self.replay_buffer[i][2] for i in indices])
+        next_obs_batch = np.array([self._flatten_observation(self.replay_buffer[i][3]) for i in indices])
+        done_batch = np.array([self.replay_buffer[i][4] for i in indices])
+        
+        # Конвертируем в тензоры
+        obs_batch = torch.FloatTensor(obs_batch).to(self.device)
+        act_batch = torch.FloatTensor(act_batch).to(self.device)
+        rew_batch = torch.FloatTensor(rew_batch).unsqueeze(1).to(self.device)  # [batch_size, 1]
+        next_obs_batch = torch.FloatTensor(next_obs_batch).to(self.device)
+        done_batch = torch.FloatTensor(done_batch).unsqueeze(1).to(self.device)  # [batch_size, 1]
         
         # Update critics
         with torch.no_grad():
@@ -280,7 +289,7 @@ class TD3:
         critic2_loss.backward()
         self.critic2_optimizer.step()
         
-        actor_loss = 0.0
+        actor_loss = torch.tensor(0.0, device=self.device)
         if len(self.replay_buffer) % self.policy_delay == 0:
             # Update actor
             actor_loss = -self.critic1(obs_batch, self.actor(obs_batch).float()).mean()
@@ -301,23 +310,10 @@ class TD3:
         
         total_loss = actor_loss + critic1_loss + critic2_loss
         
-        # Calculate and collect metrics for each sample in the batch
-        for i in range(batch_size):
-            step_metrics = self.calculate_metrics(
-                self.replay_buffer[indices[i]][0],
-                act_batch[i].cpu().numpy(),
-                rew_batch[i].item(),
-                self.replay_buffer[indices[i]][3],
-                {"latency": rew_batch[i].item()},
-                actor_loss.item() if actor_loss != 0.0 else None,
-                (critic1_loss.item() + critic2_loss.item()) / 2
-            )
-            self.metrics_collector.update(step_metrics)
-        
         return {
-            "actor_loss": actor_loss.item(),
-            "critic_loss": (critic1_loss.item() + critic2_loss.item()) / 2,
-            "total_loss": total_loss.item()
+            "actor_loss": float(actor_loss.detach().cpu().numpy()),
+            "critic_loss": float((critic1_loss + critic2_loss).detach().cpu().numpy() / 2),
+            "total_loss": float(total_loss.detach().cpu().numpy())
         }
     
     def train(self, env, total_timesteps: int, wandb_run_id: Optional[str] = None) -> Dict[str, List[float]]:
