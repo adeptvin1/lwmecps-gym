@@ -321,17 +321,16 @@ class LWMECPSEnv3(gym.Env):
                 node_usage = 0.0
                 for deployment in self.deployments:
                     replicas = self.state["nodes"][node]["deployments"][deployment]["Replicas"]
-                    if resource == "CPU":
-                        node_usage += replicas * self.state["nodes"][node]["deployments"][deployment]["CPU_usage"]
-                    elif resource == "RAM":
-                        node_usage += replicas * self.state["nodes"][node]["deployments"][deployment]["RAM_usage"]
-                    elif resource == "TX":
-                        node_usage += replicas * self.state["nodes"][node]["deployments"][deployment]["TX_usage"]
-                    elif resource == "RX":
-                        node_usage += replicas * self.state["nodes"][node]["deployments"][deployment]["RX_usage"]
+                    usage_key = f"{resource}_usage"
+                    if usage_key in self.state["nodes"][node]["deployments"][deployment]:
+                        per_replica_usage = self.state["nodes"][node]["deployments"][deployment][usage_key]
+                        node_usage += replicas * per_replica_usage
                 values.append(node_usage)
             
             # Calculate imbalance for this resource
+            if not values:
+                continue
+
             mean = sum(values) / len(values)
             imbalance = sum((x - mean) ** 2 for x in values) / len(values)
             total_imbalance += imbalance
@@ -341,7 +340,7 @@ class LWMECPSEnv3(gym.Env):
         beta = 0.1   # Weight for total replicas
         gamma = 0.1  # Weight for imbalance
         
-        reward = alpha * avg_latency - beta * total_replicas - gamma * total_imbalance
+        reward = -alpha * avg_latency - beta * total_replicas - gamma * total_imbalance
         
         return float(reward)
     

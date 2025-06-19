@@ -173,24 +173,25 @@ class RolloutBuffer:
         """Check if buffer is full."""
         return self.pos >= self.n_steps
 
-    def compute_advantages(self, gamma, lam):
+    def compute_advantages(self, last_value: float, gamma: float, lam: float):
         """
         Compute advantages using GAE.
         
         Args:
+            last_value (float): Value estimate of the state after the last one in the buffer
             gamma (float): Discount factor
             lam (float): Lambda parameter for GAE
         """
         gae = 0
         for t in reversed(range(self.n_steps)):
             if t == self.n_steps - 1:
-                next_value = 0
+                next_value = last_value
             else:
                 next_value = self.values[t + 1]
             delta = self.rewards[t] + gamma * next_value * (1 - self.dones[t]) - self.values[t]
             gae = delta + gamma * lam * (1 - self.dones[t]) * gae
             self.advantages[t] = gae
-            self.returns[t] = self.advantages[t] + self.values[t]
+        self.returns = self.advantages + self.values
 
 
 class MetricsCollector:
@@ -291,6 +292,11 @@ class PPO:
         self.model = ActorCritic(obs_dim, act_dim, hidden_size, max_replicas).to(device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
         self.buffer = RolloutBuffer(n_steps, obs_dim, act_dim)
+        
+        # Persistent state for training across calls
+        self.current_state = None
+        self.episode_num = 0
+        self.total_timesteps_so_far = 0
 
     def _flatten_observation(self, obs):
         """
@@ -361,44 +367,59 @@ class PPO:
             
             return action, log_prob, value
 
-    def collect_trajectories(self, env) -> Tuple[float, int]:
+    def collect_trajectories(self, env) -> List[Dict[str, float]]:
         """
-        Collect trajectories from environment.
+        Collect trajectories from environment for `n_steps`.
         
         Args:
             env: Environment for interaction
             
         Returns:
-            Tuple[float, int]: (episode reward, episode length)
+            List of dictionaries with metrics for each completed episode.
         """
         self.buffer.reset()
-        state, _ = env.reset()  # Get initial state and info
-        done = False
+        
+        # Reset current state if it's the first run
+        if self.current_state is None:
+            self.current_state, _ = env.reset()
+
+        # Track metrics for episodes completed during this rollout
+        completed_episodes_info = []
         episode_reward = 0
         episode_length = 0
 
-        try:
-            while not self.buffer.is_full():
-                action, log_prob, value = self.select_action(state)
-                next_state, reward, terminated, truncated, info = env.step(action)
-                done = terminated or truncated
-                # Flatten state before adding to buffer
-                flattened_state = self._flatten_observation(state)
-                self.buffer.add(flattened_state, action, reward, value, log_prob, done)
-                state = next_state
-                episode_reward += reward
-                episode_length += 1
+        for _ in range(self.n_steps):
+            action, log_prob, value = self.select_action(self.current_state)
+            next_state, reward, terminated, truncated, info = env.step(action)
+            done = terminated or truncated
 
-                if done:
-                    state, _ = env.reset()  # Get new initial state and info
-                    episode_reward = 0
-                    episode_length = 0
+            flattened_state = self._flatten_observation(self.current_state)
+            self.buffer.add(flattened_state, action, reward, value, log_prob, done)
+            
+            self.current_state = next_state
+            episode_reward += reward
+            episode_length += 1
 
-            self.buffer.compute_advantages(self.gamma, self.lam)
-            return episode_reward, episode_length
-        except Exception as e:
-            logger.error(f"Error in collect_trajectories: {str(e)}")
-            raise
+            if done:
+                self.episode_num += 1
+                completed_episodes_info.append({
+                    "episode_reward": episode_reward,
+                    "episode_length": episode_length
+                })
+                episode_reward = 0
+                episode_length = 0
+                self.current_state, _ = env.reset()
+
+        # Compute advantages for the collected buffer
+        with torch.no_grad():
+            # Get the value of the last state to bootstrap returns
+            state_tensor = torch.FloatTensor(self._flatten_observation(self.current_state)).unsqueeze(0).to(self.device)
+            _, last_value = self.model(state_tensor)
+            last_value = last_value.cpu().item()
+        
+        self.buffer.compute_advantages(last_value, self.gamma, self.lam)
+
+        return completed_episodes_info
 
     def calculate_metrics(self, state, action, reward, value, log_prob, info, actor_loss: Optional[float] = None, critic_loss: Optional[float] = None) -> Dict[str, float]:
         """Calculate all required metrics for the current step."""
@@ -435,13 +456,9 @@ class PPO:
 
     def update(self) -> Dict[str, float]:
         """Update policy based on collected data."""
-        # Compute advantages
-        self.buffer.compute_advantages(self.gamma, self.lam)
-        
         # Prepare data for update
         states = torch.FloatTensor(self.buffer.states).to(self.device)
         actions = torch.LongTensor(self.buffer.actions).to(self.device)
-        old_values = torch.FloatTensor(self.buffer.values).to(self.device)
         old_log_probs = torch.FloatTensor(self.buffer.log_probs).to(self.device)
         advantages = torch.FloatTensor(self.buffer.advantages).to(self.device)
         returns = torch.FloatTensor(self.buffer.returns).to(self.device)
@@ -477,6 +494,7 @@ class PPO:
                 actor_loss = -torch.min(surr1, surr2).mean()
                 
                 # Value loss
+                # Note: values are squeezed to match returns shape
                 critic_loss = 0.5 * (returns[idx] - values.squeeze()).pow(2).mean()
                 
                 # Total loss
@@ -487,34 +505,21 @@ class PPO:
                 loss.backward()
                 self.optimizer.step()
                 
-                # Collect metrics
-                step_metrics = self.calculate_metrics(
-                    states[idx].cpu().numpy(),
-                    actions[idx].cpu().numpy(),
-                    self.buffer.rewards[idx],
-                    values.squeeze().detach().cpu().numpy(),
-                    new_log_probs.detach().cpu().numpy(),
-                    {"latency": self.buffer.rewards[idx].mean()},
-                    actor_loss.item(),
-                    critic_loss.item()
-                )
-                self.metrics_collector.update(step_metrics)
-                
                 total_actor_loss += actor_loss.item()
                 total_critic_loss += critic_loss.item()
                 total_entropy += entropy.item()
         
-        # Reset buffer
+        # Reset buffer after update
         self.buffer.reset()
         
-        # Return average loss values
+        num_updates = self.n_epochs * (self.n_steps // self.batch_size)
         return {
-            "actor_loss": total_actor_loss / (self.n_epochs * (self.n_steps // self.batch_size)),
-            "critic_loss": total_critic_loss / (self.n_epochs * (self.n_steps // self.batch_size)),
-            "entropy": total_entropy / (self.n_epochs * (self.n_steps // self.batch_size))
+            "actor_loss": total_actor_loss / num_updates,
+            "critic_loss": total_critic_loss / num_updates,
+            "entropy": total_entropy / num_updates
         }
 
-    def train(self, env, total_timesteps: int, wandb_run_id: Optional[str] = None) -> Dict[str, List[float]]:
+    def train(self, env, total_timesteps: int, wandb_run_id: Optional[str] = None):
         """
         Train the PPO agent.
         
@@ -522,150 +527,48 @@ class PPO:
             env: The environment to train in
             total_timesteps: Total number of timesteps to train for
             wandb_run_id: Optional Weights & Biases run ID for logging
-            
-        Returns:
-            Dictionary containing training metrics
         """
-        # Initialize metrics
-        metrics = {
-            "episode_rewards": [],
-            "episode_lengths": [],
-            "actor_losses": [],
-            "critic_losses": [],
-            "accuracies": [],
-            "mses": [],
-            "mres": [],
-            "avg_latencies": [],
-            "cpu_usages": [],
-            "ram_usages": [],
-            "network_usages": []
-        }
-        
-        # Initialize episode counter
-        episode_count = 0
-        episode_reward = 0
-        episode_length = 0
-        episode_actor_loss = 0
-        episode_critic_loss = 0
-        episode_accuracy = 0
-        episode_mse = 0
-        episode_mre = 0
-        episode_avg_latency = 0
-        episode_cpu_usage = 0
-        episode_ram_usage = 0
-        episode_network_usage = 0
-        
-        # Training loop
-        state, _ = env.reset()
-        episode_count = 0
-        
-        while True:  # Changed to while True since we'll break explicitly
-            if episode_count >= total_timesteps:
-                print(f"Reached episode limit of {total_timesteps}. Stopping training.")
-                break
-                
-            # Reset episode metrics
-            episode_reward = 0
-            episode_length = 0
-            episode_actor_loss = 0
-            episode_critic_loss = 0
-            episode_accuracy = 0
-            episode_mse = 0
-            episode_mre = 0
-            episode_avg_latency = 0
-            episode_cpu_usage = 0
-            episode_ram_usage = 0
-            episode_network_usage = 0
-            
-            # Episode loop
-            done = False
-            truncated = False
-            max_steps_per_episode = 10  # Added max steps per episode
-            
-            while not (done or truncated) and episode_length < max_steps_per_episode:  # Added episode length check
-                # Select action
-                action, value, log_prob = self.select_action(state)
-                
-                # Execute action
-                next_state, reward, done, truncated, info = env.step(action)
-                
-                # Update state
-                state = next_state
-                
-                # Update episode metrics
-                episode_reward += reward
-                episode_length += 1
-                
-                # Update resource usage metrics
-                if 'avg_latency' in info:
-                    episode_avg_latency += info['avg_latency']
-                if 'cpu_usage' in info:
-                    episode_cpu_usage += info['cpu_usage']
-                if 'ram_usage' in info:
-                    episode_ram_usage += info['ram_usage']
-                if 'network_usage' in info:
-                    episode_network_usage += info['network_usage']
-                
-                # Train agent if enough samples
-                if len(self.replay_buffer) > self.batch_size:
-                    actor_loss, critic_loss = self.update()
-                    episode_actor_loss += actor_loss
-                    episode_critic_loss += critic_loss
-                    episode_accuracy += self.calculate_metrics(state, action, reward, value, log_prob, info)['accuracy']
-                    episode_mse += self.calculate_metrics(state, action, reward, value, log_prob, info)['mse']
-                    episode_mre += self.calculate_metrics(state, action, reward, value, log_prob, info)['mre']
-                
-                # Log metrics to wandb if run_id is provided
+        self.current_state, _ = env.reset()
+        self.total_timesteps_so_far = 0
+        self.episode_num = 0
+
+        while self.total_timesteps_so_far < total_timesteps:
+            # Collect a batch of trajectories
+            completed_episodes = self.collect_trajectories(env)
+            self.total_timesteps_so_far += self.n_steps
+
+            # Update the policy
+            update_metrics = self.update()
+
+            # Log metrics for completed episodes during the rollout
+            for ep_info in completed_episodes:
+                print(
+                    f"Timesteps: {self.total_timesteps_so_far}/{total_timesteps}, "
+                    f"Episode: {self.episode_num}, "
+                    f"Reward: {ep_info['episode_reward']:.2f}, "
+                    f"Length: {ep_info['episode_length']}"
+                )
                 if wandb_run_id:
                     wandb.log({
-                        "episode": episode_count,
-                        "step": episode_length,
-                        "reward": reward,
-                        "actor_loss": episode_actor_loss / (episode_length + 1e-8),
-                        "critic_loss": episode_critic_loss / (episode_length + 1e-8),
-                        "accuracy": episode_accuracy / (episode_length + 1e-8),
-                        "mse": episode_mse / (episode_length + 1e-8),
-                        "mre": episode_mre / (episode_length + 1e-8),
-                        "avg_latency": episode_avg_latency / (episode_length + 1e-8),
-                        "cpu_usage": episode_cpu_usage / (episode_length + 1e-8),
-                        "ram_usage": episode_ram_usage / (episode_length + 1e-8),
-                        "network_usage": episode_network_usage / (episode_length + 1e-8)
+                        "episode_reward": ep_info['episode_reward'],
+                        "episode_length": ep_info['episode_length'],
+                        "total_timesteps": self.total_timesteps_so_far
                     })
-            
-            # Increment episode counter
-            episode_count += 1
-            
-            # Store episode metrics
-            metrics["episode_rewards"].append(episode_reward)
-            metrics["episode_lengths"].append(episode_length)
-            metrics["actor_losses"].append(episode_actor_loss / (episode_length + 1e-8))
-            metrics["critic_losses"].append(episode_critic_loss / (episode_length + 1e-8))
-            metrics["accuracies"].append(episode_accuracy / (episode_length + 1e-8))
-            metrics["mses"].append(episode_mse / (episode_length + 1e-8))
-            metrics["mres"].append(episode_mre / (episode_length + 1e-8))
-            metrics["avg_latencies"].append(episode_avg_latency / (episode_length + 1e-8))
-            metrics["cpu_usages"].append(episode_cpu_usage / (episode_length + 1e-8))
-            metrics["ram_usages"].append(episode_ram_usage / (episode_length + 1e-8))
-            metrics["network_usages"].append(episode_network_usage / (episode_length + 1e-8))
-            
-            # Print episode summary
-            print(f"Episode: {episode_count}/{total_timesteps}, "
-                  f"Episode Reward: {episode_reward:.2f}, "
-                  f"Episode Length: {episode_length}, "
-                  f"Actor Loss: {episode_actor_loss/(episode_length + 1e-8):.3f}, "
-                  f"Critic Loss: {episode_critic_loss/(episode_length + 1e-8):.3f}, "
-                  f"Accuracy: {episode_accuracy/(episode_length + 1e-8):.3f}, "
-                  f"MSE: {episode_mse/(episode_length + 1e-8):.3f}, "
-                  f"MRE: {episode_mre/(episode_length + 1e-8):.3f}, "
-                  f"Avg Latency: {episode_avg_latency/(episode_length + 1e-8):.2f}, "
-                  f"CPU Usage: {episode_cpu_usage/(episode_length + 1e-8):.2f}, "
-                  f"RAM Usage: {episode_ram_usage/(episode_length + 1e-8):.2f}, "
-                  f"Network Usage: {episode_network_usage/(episode_length + 1e-8):.2f}")
-            
-            # Reset environment for next episode
-            state, _ = env.reset()
+
+            # Log update metrics
+            print(
+                f"  Update metrics -> "
+                f"Actor Loss: {update_metrics['actor_loss']:.3f}, "
+                f"Critic Loss: {update_metrics['critic_loss']:.3f}, "
+                f"Entropy: {update_metrics['entropy']:.3f}"
+            )
+            if wandb_run_id:
+                wandb.log({
+                    **update_metrics,
+                    "total_timesteps": self.total_timesteps_so_far
+                })
         
-        return metrics
+        print(f"Training finished after {self.total_timesteps_so_far} timesteps.")
 
     def save_model(self, path: str):
         """
@@ -779,20 +682,20 @@ def main():
 
     # Start training for 10 iterations
     print("Starting PPO training for 10 iterations...")
-    ppo_agent.train(env, total_timesteps=20480, wandb_run_id="ppo_training")  # 2048 * 10 = 20480 timesteps
+    ppo_agent.train(env, total_timesteps=20480) #, wandb_run_id="ppo_training")  # 2048 * 10 = 20480 timesteps
 
     # Test trained model
     print("\nTesting trained model...")
-    state = env.reset()
+    state, _ = env.reset()
     done = False
     cum_reward = 0.0
     while not done:
         action, log_prob, value = ppo_agent.select_action(state)
-        next_state, reward, done, info = env.step(action)
+        next_state, reward, done, _, info = env.step(action)
         cum_reward += reward
         state = next_state
-
-    env.render()
+    
+    # env.render() # render method may not exist
     print(f"Final cumulative reward: {cum_reward:.2f}")
     print(f"Episode info: {info}")
 

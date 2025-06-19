@@ -8,6 +8,22 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+"""
+ADAPTED TD3 FOR DISCRETE ACTIONS
+
+This is an adapted version of TD3 (Twin Delayed Deep Deterministic Policy Gradient)
+for discrete action spaces. The original TD3 is designed for continuous actions,
+but this implementation has been modified to work with discrete actions by:
+
+1. Using a discrete Actor that outputs action indices via argmax
+2. Removing target policy smoothing (not applicable to discrete actions)
+3. Converting discrete actions to float for critic networks
+4. Maintaining policy delay for stability
+
+Note: This is not a standard TD3 implementation. For discrete actions,
+consider using DQN, Dueling DQN, or PPO which are more suitable.
+"""
+
 class MetricsCollector:
     def __init__(self):
         self.metrics = {}
@@ -144,6 +160,9 @@ class TD3:
         self.total_losses = []
         self.mean_rewards = []
         self.mean_lengths = []
+        
+        # TD3 specific: update counter for policy delay
+        self.update_count = 0
     
     def _flatten_observation(self, obs):
         """Flatten observation into a 1D vector."""
@@ -183,10 +202,10 @@ class TD3:
     
     def select_action(self, obs):
         obs = self._flatten_observation(obs)
-        state = torch.FloatTensor(obs).to(self.device)
+        state = torch.FloatTensor(obs).unsqueeze(0).to(self.device)
         action = self.actor(state).cpu().data.numpy().squeeze()
-        # Масштабируем действия из [-1, 1] в [0, 4] и обрезаем до допустимого диапазона
-        action = np.clip(2 * action + 2, 0, 4)
+        # Actions are discrete indices, ensure they're within valid range
+        action = np.clip(action, 0, self.max_replicas)
         return action
     
     def calculate_metrics(self, obs, action, reward, next_obs, info, actor_loss: Optional[float] = None, critic_loss: Optional[float] = None) -> Dict[str, float]:
@@ -270,8 +289,8 @@ class TD3:
         # Update critics
         with torch.no_grad():
             next_actions = self.actor_target(next_obs_batch)
-            target_q1 = self.critic1_target(next_obs_batch, next_actions)
-            target_q2 = self.critic2_target(next_obs_batch, next_actions)
+            target_q1 = self.critic1_target(next_obs_batch, next_actions.float())
+            target_q2 = self.critic2_target(next_obs_batch, next_actions.float())
             target_q = torch.min(target_q1, target_q2)
             target_q = rew_batch + (1 - done_batch) * self.gamma * target_q
         
@@ -289,30 +308,35 @@ class TD3:
         critic2_loss.backward()
         self.critic2_optimizer.step()
         
-        # Update actor
-        actor_loss = -self.critic1(obs_batch, self.actor(obs_batch)).mean()
+        # Policy Delay: Update actor less frequently
+        actor_loss = 0.0
+        if self.update_count % self.policy_delay == 0:
+            actor_actions = self.actor(obs_batch)
+            actor_loss = -self.critic1(obs_batch, actor_actions.float()).mean()
+            
+            self.actor_optimizer.zero_grad()
+            actor_loss.backward()
+            self.actor_optimizer.step()
+            
+            # Update target networks
+            for param, target_param in zip(self.actor.parameters(), self.actor_target.parameters()):
+                target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+            
+            for param, target_param in zip(self.critic1.parameters(), self.critic1_target.parameters()):
+                target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+            
+            for param, target_param in zip(self.critic2.parameters(), self.critic2_target.parameters()):
+                target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
         
-        self.actor_optimizer.zero_grad()
-        actor_loss.backward()
-        self.actor_optimizer.step()
-        
-        # Update target networks
-        for param, target_param in zip(self.actor.parameters(), self.actor_target.parameters()):
-            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
-        
-        for param, target_param in zip(self.critic1.parameters(), self.critic1_target.parameters()):
-            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
-        
-        for param, target_param in zip(self.critic2.parameters(), self.critic2_target.parameters()):
-            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+        self.update_count += 1
         
         total_loss = actor_loss + critic1_loss + critic2_loss
         
         # Convert all tensors to Python floats
         return {
-            "actor_loss": float(actor_loss.detach().cpu().numpy()),
+            "actor_loss": float(actor_loss.detach().cpu().numpy()) if isinstance(actor_loss, torch.Tensor) else 0.0,
             "critic_loss": float((critic1_loss + critic2_loss).detach().cpu().numpy() / 2),
-            "total_loss": float(total_loss.detach().cpu().numpy())
+            "total_loss": float(total_loss.detach().cpu().numpy()) if isinstance(total_loss, torch.Tensor) else float((critic1_loss + critic2_loss).detach().cpu().numpy())
         }
     
     def train(self, env, total_timesteps: int, wandb_run_id: str = None) -> Dict[str, List[float]]:
@@ -413,6 +437,11 @@ class TD3:
                 # Update episode metrics
                 episode_reward += float(reward)
                 episode_length += 1
+                
+                # Check if we've reached the maximum steps
+                if episode_length >= max_steps_per_episode:
+                    print(f"Episode {episode_count} reached maximum steps ({max_steps_per_episode})")
+                    break
                 
                 # Update resource usage metrics
                 if 'avg_latency' in info:
