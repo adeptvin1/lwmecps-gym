@@ -134,8 +134,7 @@ class TrainingService:
         db_thread = None
         try:
             # Create a new DB connection for this thread
-            db_thread = Database(self.db.mongo_url, self.db.database_name)
-            loop.run_until_complete(db_thread.connect())
+            db_thread = Database(self.db.mongodb_url, self.db.database_name)
 
             # Initialize wandb and update task by scheduling on the main loop
             init_wandb(self.wandb_config, task.name)
