@@ -404,7 +404,11 @@ class TrainingService:
                     }
                     if task.model_type == ModelType.SAC:
                         metrics["alpha_loss"] = results["alpha_losses"][episode]
-                    asyncio.run(self.save_training_result(task_id, episode, metrics))
+                    future = asyncio.run_coroutine_threadsafe(
+                        self.save_training_result(task_id, episode, metrics, db_connection=db_thread),
+                        loop
+                    )
+                    future.result()
             else:
                 for episode in range(task.total_episodes):
                     metrics = {
@@ -413,7 +417,11 @@ class TrainingService:
                         "epsilon": results["episode_exploration"][episode],
                         "latency": results["episode_latency"][episode]
                     }
-                    asyncio.run(self.save_training_result(task_id, episode, metrics))
+                    future = asyncio.run_coroutine_threadsafe(
+                        self.save_training_result(task_id, episode, metrics, db_connection=db_thread),
+                        loop
+                    )
+                    future.result()
 
             # Save model
             if task.model_type == ModelType.Q_LEARNING:
@@ -534,7 +542,7 @@ class TrainingService:
         finish_wandb()
         return await self.db.update_training_task(task_id, task.model_dump())
     
-    async def save_training_result(self, task_id: str, episode: int, metrics: Dict[str, float]) -> TrainingResult:
+    async def save_training_result(self, task_id: str, episode: int, metrics: Dict[str, float], db_connection=None) -> TrainingResult:
         """
         Save training results for a specific episode.
         
@@ -542,11 +550,13 @@ class TrainingService:
             task_id: Unique identifier of the training task
             episode: Current episode number
             metrics: Dictionary of training metrics
+            db_connection: Optional database connection to use
             
         Returns:
             Created TrainingResult instance
         """
-        task = await self.db.get_training_task(task_id)
+        db = db_connection or self.db
+        task = await db.get_training_task(task_id)
         if not task:
             raise ValueError(f"Task {task_id} not found")
         
@@ -560,7 +570,7 @@ class TrainingService:
         
         # Update task metrics
         task.metrics = metrics_list
-        await self.db.update_training_task(task_id, task.model_dump())
+        await db.update_training_task(task_id, task.model_dump())
         
         result = TrainingResult(
             task_id=task_id,
@@ -572,7 +582,7 @@ class TrainingService:
         # Log metrics to Weights & Biases
         log_metrics(metrics, step=episode)
         
-        return await self.db.save_training_result(result)
+        return await db.save_training_result(result)
     
     async def get_training_progress(self, task_id: str) -> Optional[Dict[str, Any]]:
         """
