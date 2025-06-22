@@ -17,7 +17,7 @@ class WandbConfig(BaseSettings):
     class Config:
         env_prefix = "WANDB_"
 
-def init_wandb(config: WandbConfig) -> None:
+def init_wandb(config: WandbConfig, run_name: Optional[str] = None) -> None:
     """Initialize Weights & Biases with the given configuration"""
     # Create log directory if it doesn't exist
     log_dir = Path(config.log_dir)
@@ -27,6 +27,7 @@ def init_wandb(config: WandbConfig) -> None:
     wandb.init(
         project=config.project_name,
         entity=config.entity,
+        name=run_name,
         mode=config.mode,
         dir=str(log_dir),
         tags=config.tags,

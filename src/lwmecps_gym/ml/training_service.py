@@ -131,6 +131,7 @@ class TrainingService:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
+        env = None
         try:
             # Initialize wandb and update task
             init_wandb(self.wandb_config, task.name)
@@ -441,7 +442,8 @@ class TrainingService:
             finish_wandb()
         finally:
             self.active_tasks[task_id] = False
-            env.close()
+            if env:
+                env.close()
 
     async def update_training_progress(self, task_id: str, episode: int, progress: float):
         """Update the progress of a training task."""
