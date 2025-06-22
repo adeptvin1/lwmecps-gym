@@ -131,16 +131,24 @@ class TrainingService:
             loop: The asyncio event loop from the main thread
         """
         env = None
+        db_thread = None
         try:
+            # Create a new DB connection for this thread
+            db_thread = Database(self.db.mongo_url, self.db.database_name)
+            loop.run_until_complete(db_thread.connect())
+
             # Initialize wandb and update task by scheduling on the main loop
             init_wandb(self.wandb_config, task.name)
             task.wandb_run_id = wandb.run.id
             
             future = asyncio.run_coroutine_threadsafe(
-                self.db.update_training_task(task_id, task.model_dump()), 
+                db_thread.update_training_task(task_id, task.model_dump()), 
                 loop
             )
             future.result() # Wait for the update to complete
+
+            # Update the service's main task object as well
+            service_instance.task = task
 
             # Convert task_id to ObjectId for MongoDB operations
             task_id_obj = ObjectId(task_id)
@@ -375,7 +383,8 @@ class TrainingService:
                     wandb_run_id=task.wandb_run_id,
                     training_service=service_instance,
                     task_id=task_id,
-                    loop=loop
+                    loop=loop,
+                    db_connection=db_thread
                 )
             elif task.model_type in [ModelType.TD3, ModelType.SAC]:
                 results = agent.train(env, total_episodes=task.total_episodes, wandb_run_id=task.wandb_run_id)
@@ -438,7 +447,7 @@ class TrainingService:
             # Update task state
             task.state = TrainingState.COMPLETED
             future = asyncio.run_coroutine_threadsafe(
-                self.db.update_training_task(task_id, task.model_dump()),
+                db_thread.update_training_task(task_id, task.model_dump()),
                 loop
             )
             future.result()
@@ -446,24 +455,28 @@ class TrainingService:
         except Exception as e:
             logger.error(f"Error in training process for task {task_id}: {str(e)}")
             task.state = TrainingState.FAILED
-            future = asyncio.run_coroutine_threadsafe(
-                self.db.update_training_task(task_id, task.model_dump()),
-                loop
-            )
-            future.result()
+            if db_thread:
+                future = asyncio.run_coroutine_threadsafe(
+                    db_thread.update_training_task(task_id, task.model_dump()),
+                    loop
+                )
+                future.result()
             finish_wandb()
         finally:
             self.active_tasks[task_id] = False
             if env:
                 env.close()
+            if db_thread:
+                loop.run_until_complete(db_thread.close())
 
-    async def update_training_progress(self, task_id: str, episode: int, progress: float):
+    async def update_training_progress(self, task_id: str, episode: int, progress: float, db_connection=None):
         """Update the progress of a training task."""
-        task = await self.db.get_training_task(task_id)
+        db = db_connection or self.db
+        task = await db.get_training_task(task_id)
         if task:
             task.current_episode = episode
             task.progress = progress
-            await self.db.update_training_task(task_id, task.model_dump())
+            await db.update_training_task(task_id, task.model_dump())
 
     async def pause_training(self, task_id: str) -> Optional[TrainingTask]:
         """

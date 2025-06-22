@@ -521,7 +521,7 @@ class PPO:
             "entropy": total_entropy / num_updates
         }
 
-    def train(self, env, total_episodes: int, wandb_run_id: Optional[str] = None, training_service=None, task_id=None, loop=None):
+    def train(self, env, total_episodes: int, wandb_run_id: Optional[str] = None, training_service=None, task_id=None, loop=None, db_connection=None):
         """
         Train the PPO agent.
         
@@ -532,6 +532,7 @@ class PPO:
             training_service: Instance of TrainingService for progress updates
             task_id: ID of the training task
             loop: The asyncio event loop
+            db_connection: The database connection for this thread
         """
         self.current_state, _ = env.reset()
         self.total_timesteps_so_far = 0
@@ -555,11 +556,13 @@ class PPO:
                 )
                 if training_service and task_id and loop:
                     progress = (self.episode_num / total_episodes) * 100
+                    logger.info(f"Updating progress for task {task_id}: episode {self.episode_num}, progress {progress}%")
                     future = asyncio.run_coroutine_threadsafe(
-                        training_service.update_training_progress(task_id, self.episode_num, progress),
+                        training_service.update_training_progress(task_id, self.episode_num, progress, db_connection),
                         loop
                     )
                     future.result()  # Wait for the coroutine to finish
+                    logger.info(f"Successfully updated progress for task {task_id}")
 
                 if wandb_run_id:
                     wandb.log({
