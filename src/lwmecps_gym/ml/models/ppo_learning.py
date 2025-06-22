@@ -9,6 +9,7 @@ import wandb
 import asyncio
 
 from lwmecps_gym.envs import LWMECPSEnv
+from lwmecps_gym.core.wandb_config import log_metrics
 
 logger = logging.getLogger(__name__)
 
