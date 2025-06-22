@@ -6,6 +6,7 @@ from gymnasium import spaces
 import logging
 from typing import List, Dict, Union, Tuple, Optional
 import wandb
+import asyncio
 
 from lwmecps_gym.envs import LWMECPSEnv
 
@@ -464,7 +465,8 @@ class PPO:
         returns = torch.FloatTensor(self.buffer.returns).to(self.device)
         
         # Normalize advantages
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        if self.n_steps > 1:
+            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         
         total_actor_loss = 0
         total_critic_loss = 0
@@ -519,7 +521,7 @@ class PPO:
             "entropy": total_entropy / num_updates
         }
 
-    def train(self, env, total_episodes: int, wandb_run_id: Optional[str] = None):
+    def train(self, env, total_episodes: int, wandb_run_id: Optional[str] = None, training_service=None, task_id=None):
         """
         Train the PPO agent.
         
@@ -527,6 +529,8 @@ class PPO:
             env: The environment to train in
             total_episodes: Total number of episodes to train for
             wandb_run_id: Optional Weights & Biases run ID for logging
+            training_service: Instance of TrainingService for progress updates
+            task_id: ID of the training task
         """
         self.current_state, _ = env.reset()
         self.total_timesteps_so_far = 0
@@ -548,6 +552,10 @@ class PPO:
                     f"Reward: {ep_info['episode_reward']:.2f}, "
                     f"Length: {ep_info['episode_length']}"
                 )
+                if training_service and task_id:
+                    progress = (self.episode_num / total_episodes) * 100
+                    asyncio.run(training_service.update_training_progress(task_id, self.episode_num, progress))
+
                 if wandb_run_id:
                     wandb.log({
                         "episode_reward": ep_info['episode_reward'],

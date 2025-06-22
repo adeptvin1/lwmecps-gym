@@ -26,6 +26,7 @@ import uuid
 from bson.objectid import ObjectId
 import concurrent.futures
 import asyncio
+import threading
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -97,7 +98,7 @@ class TrainingService:
     
     async def start_training(self, task_id: str) -> Optional[TrainingTask]:
         """
-        Start a training task if it's in a valid state.
+        Start a new training task.
         
         Args:
             task_id: Unique identifier of the training task
@@ -105,68 +106,31 @@ class TrainingService:
         Returns:
             Updated TrainingTask instance if successful, None otherwise
         """
-        logger.info(f"Attempting to start training task {task_id}")
-        
-        # Get the task from database
         task = await self.db.get_training_task(task_id)
         if not task:
-            logger.error(f"Task {task_id} not found")
-            return None
-            
-        logger.info(f"Found task {task_id} in state {task.state}")
-        
-        # Validate task state
-        if task.state != TrainingState.PENDING:
-            logger.error(f"Task {task_id} is in state {task.state}, cannot start")
-            return None
-        
-        try:
-            # Initialize Weights & Biases for experiment tracking
-            init_wandb(self.wandb_config)
-            logger.info(f"Initialized wandb run with ID {wandb.run.id}")
-            
-            # Update task state to RUNNING
-            task.state = TrainingState.RUNNING
-            task.wandb_run_id = wandb.run.id
-            task = await self.db.update_training_task(task_id, task.model_dump())
-            
-            if not task:
-                logger.error(f"Failed to update task {task_id} state")
-                finish_wandb()
-                return None
-                
-            logger.info(f"Successfully started task {task_id}")
-            
-            # Mark task as active and start training process
-            self.active_tasks[task_id] = True
-            
-            # Запускаем обучение в отдельном потоке
-            loop = asyncio.get_running_loop()
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                try:
-                    await loop.run_in_executor(pool, self._run_training, task_id, task)
-                except Exception as e:
-                    logger.error(f"Error in training process: {str(e)}")
-                    task.state = TrainingState.FAILED
-                    await self.db.update_training_task(task_id, task.model_dump())
-                    finish_wandb()
-                    return None
-            
-            return task
-            
-        except Exception as e:
-            logger.error(f"Error starting task {task_id}: {str(e)}")
-            finish_wandb()
             return None
 
-    def _run_training(self, task_id: str, task: TrainingTask):
+        task.state = TrainingState.RUNNING
+        await self.db.update_training_task(task_id, task.model_dump())
+
+        # Start training in a separate thread
+        thread = threading.Thread(target=self._run_training, args=(task_id, task, self))
+        thread.start()
+
+        return task
+
+    def _run_training(self, task_id: str, task: TrainingTask, service_instance):
         """
-        Run the training process for a specific task.
+        The actual training process, designed to be run in a thread.
         
         Args:
             task_id: Unique identifier of the training task
-            task: TrainingTask instance
+            task: The TrainingTask instance
+            service_instance: The instance of TrainingService to call back to
         """
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
         try:
             # Convert task_id to ObjectId for MongoDB operations
             task_id_obj = ObjectId(task_id)
@@ -395,7 +359,13 @@ class TrainingService:
 
             # Run training
             if task.model_type == ModelType.PPO:
-                results = agent.train(env, total_episodes=task.total_episodes, wandb_run_id=task.wandb_run_id)
+                results = agent.train(
+                    env, 
+                    total_episodes=task.total_episodes, 
+                    wandb_run_id=task.wandb_run_id,
+                    training_service=service_instance,
+                    task_id=task_id
+                )
             elif task.model_type in [ModelType.TD3, ModelType.SAC]:
                 results = agent.train(env, total_episodes=task.total_episodes, wandb_run_id=task.wandb_run_id)
             else:
@@ -466,6 +436,14 @@ class TrainingService:
         finally:
             self.active_tasks[task_id] = False
             env.close()
+
+    async def update_training_progress(self, task_id: str, episode: int, progress: float):
+        """Update the progress of a training task."""
+        task = await self.db.get_training_task(task_id)
+        if task:
+            task.current_episode = episode
+            task.progress = progress
+            await self.db.update_training_task(task_id, task.model_dump())
 
     async def pause_training(self, task_id: str) -> Optional[TrainingTask]:
         """
