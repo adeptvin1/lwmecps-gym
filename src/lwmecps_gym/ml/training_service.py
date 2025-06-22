@@ -575,7 +575,7 @@ class TrainingService:
         result = TrainingResult(
             task_id=task_id,
             episode=episode,
-            metrics=metrics_list,
+            metrics=metrics,
             wandb_run_id=task.wandb_run_id
         )
         
