@@ -552,7 +552,7 @@ class PPO:
                 next_obs, reward, terminated, truncated, info = env.step(action)
                 done = terminated or truncated
 
-                self.buffer.add(obs, action, reward, value, log_prob, done)
+                self.buffer.add(self._flatten_observation(obs), action, reward, value, log_prob, done)
                 obs = next_obs
                 ep_reward += reward
                 ep_len += 1
