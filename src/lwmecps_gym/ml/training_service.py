@@ -132,6 +132,11 @@ class TrainingService:
         asyncio.set_event_loop(loop)
         
         try:
+            # Initialize wandb and update task
+            init_wandb(self.wandb_config, task.name)
+            task.wandb_run_id = wandb.run.id
+            loop.run_until_complete(self.db.update_training_task(task_id, task.model_dump()))
+
             # Convert task_id to ObjectId for MongoDB operations
             task_id_obj = ObjectId(task_id)
             logger.info(f"Starting training process for task {task_id}")
@@ -364,7 +369,8 @@ class TrainingService:
                     total_episodes=task.total_episodes, 
                     wandb_run_id=task.wandb_run_id,
                     training_service=service_instance,
-                    task_id=task_id
+                    task_id=task_id,
+                    loop=loop
                 )
             elif task.model_type in [ModelType.TD3, ModelType.SAC]:
                 results = agent.train(env, total_episodes=task.total_episodes, wandb_run_id=task.wandb_run_id)
@@ -426,12 +432,12 @@ class TrainingService:
 
             # Update task state
             task.state = TrainingState.COMPLETED
-            asyncio.run(self.db.update_training_task(task_id, task.model_dump()))
+            loop.run_until_complete(self.db.update_training_task(task_id, task.model_dump()))
 
         except Exception as e:
             logger.error(f"Error in training process for task {task_id}: {str(e)}")
             task.state = TrainingState.FAILED
-            asyncio.run(self.db.update_training_task(task_id, task.model_dump()))
+            loop.run_until_complete(self.db.update_training_task(task_id, task.model_dump()))
             finish_wandb()
         finally:
             self.active_tasks[task_id] = False
