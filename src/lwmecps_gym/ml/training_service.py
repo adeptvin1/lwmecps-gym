@@ -421,6 +421,7 @@ class TrainingService:
                 agent.save_q_table(model_path)
             else:
                 model_path = f"./models/model_{task_id}.pth"
+                logger.info(f"Attempting to save model to {model_path}")
                 agent.save_model(model_path)
                 
             # Save model to wandb if run_id is provided
