@@ -113,13 +113,14 @@ class TrainingService:
         task.state = TrainingState.RUNNING
         await self.db.update_training_task(task_id, task.model_dump())
 
-        # Start training in a separate thread
-        thread = threading.Thread(target=self._run_training, args=(task_id, task, self))
+        # Start training in a separate thread, passing the running event loop
+        loop = asyncio.get_running_loop()
+        thread = threading.Thread(target=self._run_training, args=(task_id, task, self, loop))
         thread.start()
 
         return task
 
-    def _run_training(self, task_id: str, task: TrainingTask, service_instance):
+    def _run_training(self, task_id: str, task: TrainingTask, service_instance, loop):
         """
         The actual training process, designed to be run in a thread.
         
@@ -127,16 +128,19 @@ class TrainingService:
             task_id: Unique identifier of the training task
             task: The TrainingTask instance
             service_instance: The instance of TrainingService to call back to
+            loop: The asyncio event loop from the main thread
         """
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
         env = None
         try:
-            # Initialize wandb and update task
+            # Initialize wandb and update task by scheduling on the main loop
             init_wandb(self.wandb_config, task.name)
             task.wandb_run_id = wandb.run.id
-            loop.run_until_complete(self.db.update_training_task(task_id, task.model_dump()))
+            
+            future = asyncio.run_coroutine_threadsafe(
+                self.db.update_training_task(task_id, task.model_dump()), 
+                loop
+            )
+            future.result() # Wait for the update to complete
 
             # Convert task_id to ObjectId for MongoDB operations
             task_id_obj = ObjectId(task_id)
@@ -433,12 +437,20 @@ class TrainingService:
 
             # Update task state
             task.state = TrainingState.COMPLETED
-            loop.run_until_complete(self.db.update_training_task(task_id, task.model_dump()))
+            future = asyncio.run_coroutine_threadsafe(
+                self.db.update_training_task(task_id, task.model_dump()),
+                loop
+            )
+            future.result()
 
         except Exception as e:
             logger.error(f"Error in training process for task {task_id}: {str(e)}")
             task.state = TrainingState.FAILED
-            loop.run_until_complete(self.db.update_training_task(task_id, task.model_dump()))
+            future = asyncio.run_coroutine_threadsafe(
+                self.db.update_training_task(task_id, task.model_dump()),
+                loop
+            )
+            future.result()
             finish_wandb()
         finally:
             self.active_tasks[task_id] = False
