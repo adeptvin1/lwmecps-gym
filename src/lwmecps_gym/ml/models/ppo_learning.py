@@ -519,20 +519,20 @@ class PPO:
             "entropy": total_entropy / num_updates
         }
 
-    def train(self, env, total_timesteps: int, wandb_run_id: Optional[str] = None):
+    def train(self, env, total_episodes: int, wandb_run_id: Optional[str] = None):
         """
         Train the PPO agent.
         
         Args:
             env: The environment to train in
-            total_timesteps: Total number of timesteps to train for
+            total_episodes: Total number of episodes to train for
             wandb_run_id: Optional Weights & Biases run ID for logging
         """
         self.current_state, _ = env.reset()
         self.total_timesteps_so_far = 0
         self.episode_num = 0
 
-        while self.total_timesteps_so_far < total_timesteps:
+        while self.episode_num < total_episodes:
             # Collect a batch of trajectories
             completed_episodes = self.collect_trajectories(env)
             self.total_timesteps_so_far += self.n_steps
@@ -543,8 +543,8 @@ class PPO:
             # Log metrics for completed episodes during the rollout
             for ep_info in completed_episodes:
                 print(
-                    f"Timesteps: {self.total_timesteps_so_far}/{total_timesteps}, "
-                    f"Episode: {self.episode_num}, "
+                    f"Timesteps: {self.total_timesteps_so_far}, "
+                    f"Episode: {self.episode_num}/{total_episodes}, "
                     f"Reward: {ep_info['episode_reward']:.2f}, "
                     f"Length: {ep_info['episode_length']}"
                 )
@@ -552,7 +552,8 @@ class PPO:
                     wandb.log({
                         "episode_reward": ep_info['episode_reward'],
                         "episode_length": ep_info['episode_length'],
-                        "total_timesteps": self.total_timesteps_so_far
+                        "total_timesteps": self.total_timesteps_so_far,
+                        "episode": self.episode_num
                     })
 
             # Log update metrics
@@ -568,7 +569,7 @@ class PPO:
                     "total_timesteps": self.total_timesteps_so_far
                 })
         
-        print(f"Training finished after {self.total_timesteps_so_far} timesteps.")
+        print(f"Training finished after {self.episode_num} episodes.")
 
     def save_model(self, path: str):
         """
@@ -682,7 +683,7 @@ def main():
 
     # Start training for 10 iterations
     print("Starting PPO training for 10 iterations...")
-    ppo_agent.train(env, total_timesteps=20480) #, wandb_run_id="ppo_training")  # 2048 * 10 = 20480 timesteps
+    ppo_agent.train(env, total_episodes=10) #, wandb_run_id="ppo_training")
 
     # Test trained model
     print("\nTesting trained model...")

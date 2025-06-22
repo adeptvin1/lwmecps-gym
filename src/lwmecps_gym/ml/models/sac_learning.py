@@ -359,182 +359,104 @@ class SAC:
             "total_loss": total_loss.item()
         }
     
-    def train(self, env, total_timesteps: int, wandb_run_id: Optional[str] = None) -> Dict[str, List[float]]:
+    def train(self, env, total_episodes: int, wandb_run_id: Optional[str] = None) -> Dict[str, List[float]]:
         """
         Train the SAC agent.
         
         Args:
             env: The environment to train in
-            total_timesteps: Total number of timesteps to train for
+            total_episodes: Total number of episodes to train for
             wandb_run_id: Optional Weights & Biases run ID for logging
-            
-        Returns:
-            Dictionary containing training metrics
-        """
-        # Initialize metrics
-        metrics = {
-            "episode_rewards": [],
-            "episode_lengths": [],
-            "actor_losses": [],
-            "critic_losses": [],
-            "alpha_losses": [],
-            "accuracies": [],
-            "mses": [],
-            "mres": [],
-            "avg_latencies": [],
-            "cpu_usages": [],
-            "ram_usages": [],
-            "network_usages": []
-        }
         
-        # Initialize episode counter
-        episode_count = 0
+        Returns:
+            Dictionary with lists of metrics for each episode
+        """
+        # Reset metrics
+        self.episode_rewards = []
+        self.episode_lengths = []
+        self.actor_losses = []
+        self.critic_losses = []
+        self.alpha_losses = []
+        self.total_losses = []
+        self.mean_rewards = []
+        self.mean_lengths = []
+
+        obs, _ = env.reset()
         episode_reward = 0
         episode_length = 0
-        episode_actor_loss = 0
-        episode_critic_loss = 0
-        episode_alpha_loss = 0
-        episode_accuracy = 0
-        episode_mse = 0
-        episode_mre = 0
-        episode_avg_latency = 0
-        episode_cpu_usage = 0
-        episode_ram_usage = 0
-        episode_network_usage = 0
-        
-        # Pre-fill replay buffer with random actions
-        print("Pre-filling replay buffer...")
-        state, _ = env.reset()
-        for _ in range(self.batch_size):
-            action = env.action_space.sample()
-            next_state, reward, done, _, info = env.step(action)
-            self.replay_buffer.append((state, action, reward, next_state, done))
-            state = next_state
+        episode_num = 0
+
+        for t in range(1, total_episodes * env.spec.max_episode_steps + 1):
+            action = self.select_action(obs)
+            next_obs, reward, terminated, truncated, info = env.step(action)
+            done = terminated or truncated
+
+            # Store transition
+            self.replay_buffer.append((obs, action, reward, next_obs, done))
+            if len(self.replay_buffer) > self.max_buffer_size:
+                self.replay_buffer.pop(0)
+
+            obs = next_obs
+            episode_reward += reward
+            episode_length += 1
+
+            # Update networks
+            update_metrics = self.update()
+
             if done:
-                state, _ = env.reset()
-        print("Replay buffer pre-filled")
-        
-        # Training loop
-        state, _ = env.reset()
-        episode_count = 0
-        
-        while True:  # Changed to while True since we'll break explicitly
-            if episode_count >= total_timesteps:
-                print(f"Reached episode limit of {total_timesteps}. Stopping training.")
-                break
-                
-            # Reset episode metrics
-            episode_reward = 0
-            episode_length = 0
-            episode_actor_loss = 0
-            episode_critic_loss = 0
-            episode_alpha_loss = 0
-            episode_accuracy = 0
-            episode_mse = 0
-            episode_mre = 0
-            episode_avg_latency = 0
-            episode_cpu_usage = 0
-            episode_ram_usage = 0
-            episode_network_usage = 0
-            
-            # Episode loop
-            done = False
-            truncated = False
-            max_steps_per_episode = 10  # Added max steps per episode
-            
-            while not (done or truncated) and episode_length < max_steps_per_episode:  # Added episode length check
-                # Select action
-                action = self.select_action(state)
-                
-                # Execute action
-                next_state, reward, done, truncated, info = env.step(action)
-                
-                # Store transition in replay buffer
-                self.replay_buffer.append((state, action, reward, next_state, done))
-                if len(self.replay_buffer) > self.max_buffer_size:
-                    self.replay_buffer.pop(0)
-                
-                # Update state
-                state = next_state
-                
-                # Update episode metrics
-                episode_reward += reward
-                episode_length += 1
-                
-                # Update resource usage metrics
-                if 'avg_latency' in info:
-                    episode_avg_latency += info['avg_latency']
-                if 'cpu_usage' in info:
-                    episode_cpu_usage += info['cpu_usage']
-                if 'ram_usage' in info:
-                    episode_ram_usage += info['ram_usage']
-                if 'network_usage' in info:
-                    episode_network_usage += info['network_usage']
-                
-                # Train agent if enough samples
-                if len(self.replay_buffer) > self.batch_size:
-                    actor_loss, critic_loss, alpha_loss = self.update()
-                    episode_actor_loss += actor_loss
-                    episode_critic_loss += critic_loss
-                    episode_alpha_loss += alpha_loss
-                    episode_accuracy += self.calculate_metrics(state, action, reward, next_state, info)['accuracy']
-                    episode_mse += self.calculate_metrics(state, action, reward, next_state, info)['mse']
-                    episode_mre += self.calculate_metrics(state, action, reward, next_state, info)['mre']
-                
-                # Log metrics to wandb if run_id is provided
+                episode_num += 1
+                self.episode_rewards.append(episode_reward)
+                self.episode_lengths.append(episode_length)
+
+                # Update metrics lists
+                self.actor_losses.append(update_metrics["actor_loss"])
+                self.critic_losses.append(update_metrics["critic_loss"])
+                self.alpha_losses.append(update_metrics["alpha_loss"])
+                self.total_losses.append(update_metrics["total_loss"])
+                self.mean_rewards.append(np.mean(self.episode_rewards[-100:]))
+                self.mean_lengths.append(np.mean(self.episode_lengths[-100:]))
+
+                print(
+                    f"Episode: {episode_num}/{total_episodes}, "
+                    f"Reward: {episode_reward:.2f}, "
+                    f"Length: {episode_length}, "
+                    f"Actor Loss: {update_metrics['actor_loss']:.3f}, "
+                    f"Critic Loss: {update_metrics['critic_loss']:.3f}, "
+                    f"Alpha: {self.alpha:.3f}"
+                )
+
                 if wandb_run_id:
                     wandb.log({
-                        "episode": episode_count,
-                        "step": episode_length,
-                        "reward": reward,
-                        "actor_loss": episode_actor_loss / (episode_length + 1e-8),
-                        "critic_loss": episode_critic_loss / (episode_length + 1e-8),
-                        "alpha_loss": episode_alpha_loss / (episode_length + 1e-8),
-                        "accuracy": episode_accuracy / (episode_length + 1e-8),
-                        "mse": episode_mse / (episode_length + 1e-8),
-                        "mre": episode_mre / (episode_length + 1e-8),
-                        "avg_latency": episode_avg_latency / (episode_length + 1e-8),
-                        "cpu_usage": episode_cpu_usage / (episode_length + 1e-8),
-                        "ram_usage": episode_ram_usage / (episode_length + 1e-8),
-                        "network_usage": episode_network_usage / (episode_length + 1e-8)
+                        "episode_reward": episode_reward,
+                        "episode_length": episode_length,
+                        "actor_loss": update_metrics["actor_loss"],
+                        "critic_loss": update_metrics["critic_loss"],
+                        "alpha_loss": update_metrics["alpha_loss"],
+                        "total_loss": update_metrics["total_loss"],
+                        "mean_reward": self.mean_rewards[-1],
+                        "mean_length": self.mean_lengths[-1],
+                        "alpha": self.alpha,
+                        "episode": episode_num
                     })
-            
-            # Increment episode counter
-            episode_count += 1
-            
-            # Store episode metrics
-            metrics["episode_rewards"].append(episode_reward)
-            metrics["episode_lengths"].append(episode_length)
-            metrics["actor_losses"].append(episode_actor_loss / (episode_length + 1e-8))
-            metrics["critic_losses"].append(episode_critic_loss / (episode_length + 1e-8))
-            metrics["alpha_losses"].append(episode_alpha_loss / (episode_length + 1e-8))
-            metrics["accuracies"].append(episode_accuracy / (episode_length + 1e-8))
-            metrics["mses"].append(episode_mse / (episode_length + 1e-8))
-            metrics["mres"].append(episode_mre / (episode_length + 1e-8))
-            metrics["avg_latencies"].append(episode_avg_latency / (episode_length + 1e-8))
-            metrics["cpu_usages"].append(episode_cpu_usage / (episode_length + 1e-8))
-            metrics["ram_usages"].append(episode_ram_usage / (episode_length + 1e-8))
-            metrics["network_usages"].append(episode_network_usage / (episode_length + 1e-8))
-            
-            # Print episode summary
-            print(f"Episode: {episode_count}/{total_timesteps}, "
-                  f"Episode Reward: {episode_reward:.2f}, "
-                  f"Episode Length: {episode_length}, "
-                  f"Actor Loss: {episode_actor_loss/(episode_length + 1e-8):.3f}, "
-                  f"Critic Loss: {episode_critic_loss/(episode_length + 1e-8):.3f}, "
-                  f"Alpha Loss: {episode_alpha_loss/(episode_length + 1e-8):.3f}, "
-                  f"Accuracy: {episode_accuracy/(episode_length + 1e-8):.3f}, "
-                  f"MSE: {episode_mse/(episode_length + 1e-8):.3f}, "
-                  f"MRE: {episode_mre/(episode_length + 1e-8):.3f}, "
-                  f"Avg Latency: {episode_avg_latency/(episode_length + 1e-8):.2f}, "
-                  f"CPU Usage: {episode_cpu_usage/(episode_length + 1e-8):.2f}, "
-                  f"RAM Usage: {episode_ram_usage/(episode_length + 1e-8):.2f}, "
-                  f"Network Usage: {episode_network_usage/(episode_length + 1e-8):.2f}")
-            
-            # Reset environment for next episode
-            state, _ = env.reset()
-        
-        return metrics
+
+                # Reset for next episode
+                obs, _ = env.reset()
+                episode_reward = 0
+                episode_length = 0
+                
+                if episode_num >= total_episodes:
+                    break
+
+        return {
+            "episode_rewards": self.episode_rewards,
+            "episode_lengths": self.episode_lengths,
+            "actor_losses": self.actor_losses,
+            "critic_losses": self.critic_losses,
+            "alpha_losses": self.alpha_losses,
+            "total_losses": self.total_losses,
+            "mean_rewards": self.mean_rewards,
+            "mean_lengths": self.mean_lengths
+        }
     
     def save_model(self, path: str):
         torch.save({
