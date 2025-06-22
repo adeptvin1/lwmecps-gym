@@ -49,6 +49,11 @@ class LWMECPSEnv3(gym.Env):
         self.stabilization_time = int(env_config.get("stabilization_time", stabilization_time)) if env_config else stabilization_time
         self.minikube = k8s()
         self.max_replicas = int(self.max_hardware["cpu"] / self.pod_usage["cpu"])
+        
+        # Add max_episode_steps and current_step
+        self.max_episode_steps = 5
+        self.current_step = 0
+        
         self.action_space = gym.spaces.MultiDiscrete(
             [self.max_replicas + 1] * len(deployments)
         )
@@ -111,6 +116,9 @@ class LWMECPSEnv3(gym.Env):
     def reset(self, seed=None, options=None) -> Tuple[Dict, Dict]:
         """Reset the environment to initial state."""
         super().reset(seed=seed)
+        
+        # Reset step counter
+        self.current_step = 0
         
         try:
             # Validate node_name
@@ -233,6 +241,8 @@ class LWMECPSEnv3(gym.Env):
 
     def step(self, action: np.ndarray) -> Tuple[Dict, float, bool, bool, Dict]:
         """Execute one time step within the environment."""
+        self.current_step += 1
+        
         try:
             # Validate action
             if not isinstance(action, np.ndarray) or action.shape != (len(self.deployments),):
@@ -286,10 +296,11 @@ class LWMECPSEnv3(gym.Env):
             reward = self._calculate_reward()
             self.logger.info(f"Calculated reward: {reward}")
             
-            # Check if episode is done
-            done = False
+            # Check for termination conditions
+            terminated = False  # No specific termination condition yet
+            truncated = self.current_step >= self.max_episode_steps
             
-            return self.state, reward, done, False, {}
+            return self.state, reward, terminated, truncated, {}
             
         except Exception as e:
             self.logger.error(f"Failed to execute step: {str(e)}")
