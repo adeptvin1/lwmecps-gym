@@ -526,70 +526,95 @@ class PPO:
         Train the PPO agent.
         
         Args:
-            env: The environment to train in
-            total_episodes: Total number of episodes to train for
-            wandb_run_id: Optional Weights & Biases run ID for logging
-            training_service: Instance of TrainingService for progress updates
-            task_id: ID of the training task
-            loop: The asyncio event loop
-            db_connection: The database connection for this thread
+            env: The environment to train on
+            total_episodes (int): Total number of episodes to train for
+            wandb_run_id (str, optional): Weights & Biases run ID
+            training_service: The TrainingService instance for callbacks
+            task_id: The ID of the training task
+            loop: The main event loop
+            db_connection: Database connection for the thread
         """
-        self.current_state, _ = env.reset()
-        self.total_timesteps_so_far = 0
-        self.episode_num = 0
+        logger.info(f"Starting PPO training for {total_episodes} episodes.")
+        
+        episode_rewards = []
+        episode_lengths = []
+        actor_losses = []
+        critic_losses = []
 
-        while self.episode_num < total_episodes:
-            # Collect a batch of trajectories
-            completed_episodes = self.collect_trajectories(env)
-            self.total_timesteps_so_far += self.n_steps
+        for episode in range(1, total_episodes + 1):
+            obs, info = env.reset()
+            done = False
+            ep_reward = 0
+            ep_len = 0
+
+            while not done:
+                action, log_prob, value = self.select_action(obs)
+                next_obs, reward, terminated, truncated, info = env.step(action)
+                done = terminated or truncated
+
+                self.buffer.add(obs, action, reward, value, log_prob, done)
+                obs = next_obs
+                ep_reward += reward
+                ep_len += 1
+
+                if done:
+                    break
 
             # Update the policy
             update_metrics = self.update()
 
-            # Log metrics for completed episodes during the rollout
-            for ep_info in completed_episodes:
-                print(
-                    f"Timesteps: {self.total_timesteps_so_far}, "
-                    f"Episode: {self.episode_num}/{total_episodes}, "
-                    f"Reward: {ep_info['episode_reward']:.2f}, "
-                    f"Length: {ep_info['episode_length']}"
-                )
-                if training_service and task_id and loop:
-                    progress = (self.episode_num / total_episodes) * 100
-                    logger.info(f"Updating progress for task {task_id}: episode {self.episode_num}, progress {progress}%")
+            # Log average metrics for the episode
+            avg_metrics = self.metrics_collector.get_average_metrics()
+            if wandb_run_id:
+                log_metrics(avg_metrics, step=episode)
+
+            # Store episode metrics
+            episode_rewards.append(ep_reward)
+            episode_lengths.append(ep_len)
+            actor_losses.append(avg_metrics.get("actor_loss", 0))
+            critic_losses.append(avg_metrics.get("critic_loss", 0))
+            
+            # Print progress
+            logger.info(
+                f"Episode {episode}/{total_episodes}, "
+                f"Reward: {ep_reward:.2f}, "
+                f"Length: {ep_len}"
+            )
+            
+            # Update progress in the database
+            if training_service and task_id and loop and db_connection:
+                progress = (episode / total_episodes) * 100
+                try:
+                    logger.info(f"Updating progress for task {task_id}: episode {episode}, progress {progress:.1f}%")
                     future = asyncio.run_coroutine_threadsafe(
-                        training_service.update_training_progress(task_id, self.episode_num, progress, db_connection),
+                        training_service.update_training_progress(task_id, episode, progress, db_connection), 
                         loop
                     )
-                    future.result()  # Wait for the coroutine to finish
+                    future.result(timeout=10)  # Wait for the update to complete
                     logger.info(f"Successfully updated progress for task {task_id}")
+                except Exception as e:
+                    logger.error(f"Failed to update progress for task {task_id}: {str(e)}")
 
-                if wandb_run_id:
-                    wandb.log({
-                        "episode_reward": ep_info['episode_reward'],
-                        "episode_length": ep_info['episode_length'],
-                        "total_timesteps": self.total_timesteps_so_far,
-                        "episode": self.episode_num
-                    })
-
-            # Log update metrics
-            print(
-                f"  Update metrics -> "
-                f"Actor Loss: {update_metrics['actor_loss']:.3f}, "
-                f"Critic Loss: {update_metrics['critic_loss']:.3f}, "
-                f"Entropy: {update_metrics['entropy']:.3f}"
-            )
-            if wandb_run_id:
-                wandb.log({
-                    **update_metrics,
-                    "total_timesteps": self.total_timesteps_so_far
-                })
+        logger.info(f"Training finished after {total_episodes} episodes.")
         
-        print(f"Training finished after {self.episode_num} episodes.")
+        # Calculate final metrics
+        total_losses = [a + c for a, c in zip(actor_losses, critic_losses)]
+        mean_rewards = [np.mean(episode_rewards[max(0, i-100):i+1]) for i in range(len(episode_rewards))]
+        mean_lengths = [np.mean(episode_lengths[max(0, i-100):i+1]) for i in range(len(episode_lengths))]
+
+        return {
+            "episode_rewards": episode_rewards,
+            "episode_lengths": episode_lengths,
+            "actor_losses": actor_losses,
+            "critic_losses": critic_losses,
+            "total_losses": total_losses,
+            "mean_rewards": mean_rewards,
+            "mean_lengths": mean_lengths
+        }
 
     def save_model(self, path: str):
         """
-        Save model.
+        Save model parameters to a file.
         
         Args:
             path (str): Path to save

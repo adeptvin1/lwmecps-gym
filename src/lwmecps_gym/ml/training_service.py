@@ -467,7 +467,8 @@ class TrainingService:
             if env:
                 env.close()
             if db_thread:
-                loop.run_until_complete(db_thread.close())
+                future = asyncio.run_coroutine_threadsafe(db_thread.close(), loop)
+                future.result()
 
     async def update_training_progress(self, task_id: str, episode: int, progress: float, db_connection=None):
         """Update the progress of a training task."""
