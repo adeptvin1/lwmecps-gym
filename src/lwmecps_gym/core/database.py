@@ -108,15 +108,14 @@ class Database:
             return []
     
     async def save_reconciliation_result(self, result: ReconciliationResult) -> ReconciliationResult:
-        """Save a reconciliation result"""
-        try:
-            result_dict = result.model_dump(by_alias=True, exclude={'id'})
-            db_result = await self.db.reconciliation_results.insert_one(result_dict)
-            result.id = str(db_result.inserted_id)
-            return result
-        except Exception as e:
-            print(f"Error saving reconciliation result: {e}")
-            raise
+        """Save a new reconciliation result."""
+        reconciliation_result = await self.db.reconciliation_results.insert_one(
+            result.model_dump(by_alias=True)
+        )
+        new_reconciliation_result = await self.db.reconciliation_results.find_one(
+            {"_id": reconciliation_result.inserted_id}
+        )
+        return ReconciliationResult(**new_reconciliation_result)
     
     async def get_reconciliation_results(self, task_id: str) -> List[ReconciliationResult]:
         """Get all reconciliation results for a task"""

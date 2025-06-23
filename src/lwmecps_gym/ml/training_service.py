@@ -27,6 +27,7 @@ from bson.objectid import ObjectId
 import concurrent.futures
 import asyncio
 import threading
+import os
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -615,4 +616,68 @@ class TrainingService:
             "state": task.state,
             "metrics": task.metrics,
             "wandb_run_id": task.wandb_run_id
-        } 
+        }
+    
+    async def run_reconciliation(self, task_id: str, sample_size: int) -> ReconciliationResult:
+        """
+        Run model reconciliation on new data.
+        
+        Args:
+            task_id: Unique identifier of the training task
+            sample_size: The number of steps to run the reconciliation for
+            
+        Returns:
+            ReconciliationResult instance
+        """
+        task = await self.db.get_training_task(task_id)
+        if not task:
+            raise ValueError(f"Task {task_id} not found")
+        
+        if task.state != TrainingState.COMPLETED:
+            raise ValueError(f"Task {task_id} is not completed")
+            
+        model_path = f"./models/model_{task.model_type.value}_{task_id}.pth"
+        if not os.path.exists(model_path):
+            raise ValueError(f"Model file not found at {model_path}")
+            
+        # Create environment
+        env = gym.make("lwmecps-v3")
+        obs, _ = env.reset()
+        
+        # Load model
+        agent = self._get_agent(task, env.observation_space.shape[0], env.action_space.shape[0])
+        agent.load_model(model_path)
+        
+        total_reward = 0
+        for _ in range(sample_size):
+            action = agent.select_action(obs)
+            obs, reward, terminated, truncated, info = env.step(action)
+            total_reward += reward
+            if terminated or truncated:
+                obs, _ = env.reset()
+                
+        env.close()
+        
+        metrics = {"avg_reward": total_reward / sample_size}
+        
+        result = ReconciliationResult(
+            task_id=task_id,
+            model_type=task.model_type,
+            wandb_run_id=task.wandb_run_id,
+            metrics=metrics,
+            sample_size=sample_size,
+            model_weights_path=model_path
+        )
+        
+        return await self.db.save_reconciliation_result(result)
+        
+    def _get_agent(self, task: TrainingTask, obs_dim: int, act_dim: int):
+        """Helper function to get agent instance."""
+        if task.model_type == ModelType.PPO:
+            return PPO(obs_dim, act_dim)
+        elif task.model_type == ModelType.SAC:
+            return SAC(obs_dim, act_dim)
+        elif task.model_type == ModelType.TD3:
+            return TD3(obs_dim, act_dim)
+        else:
+            raise ValueError(f"Unsupported model type: {task.model_type}") 
