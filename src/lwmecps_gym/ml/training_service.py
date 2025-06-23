@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 register(
     id="lwmecps-v3",
     entry_point="lwmecps_gym.envs:LWMECPSEnv3",
+    max_episode_steps=5,
 )
 
 class TrainingService:
@@ -353,7 +354,12 @@ class TrainingService:
                     noise=task.parameters.get("noise", 0.2),
                     batch_size=task.parameters.get("batch_size", 256),
                     device=task.parameters.get("device", "cpu"),
-                    deployments=task.parameters.get("deployments", ["mec-test-app"])
+                    deployments=[
+                        "lwmecps-testapp-server-bs1",
+                        "lwmecps-testapp-server-bs2",
+                        "lwmecps-testapp-server-bs3",
+                        "lwmecps-testapp-server-bs4"
+                    ]
                 )
             elif task.model_type == ModelType.SAC:
                 agent = SAC(
@@ -368,7 +374,12 @@ class TrainingService:
                     target_entropy=task.parameters.get("target_entropy", -1.0),
                     batch_size=task.parameters.get("batch_size", 256),
                     device=task.parameters.get("device", "cpu"),
-                    deployments=task.parameters.get("deployments", ["mec-test-app"]),
+                    deployments=[
+                        "lwmecps-testapp-server-bs1",
+                        "lwmecps-testapp-server-bs2",
+                        "lwmecps-testapp-server-bs3",
+                        "lwmecps-testapp-server-bs4"
+                    ],
                     max_replicas=task.parameters.get("max_replicas", 10)
                 )
             else:
