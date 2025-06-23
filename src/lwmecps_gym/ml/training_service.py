@@ -342,6 +342,7 @@ class TrainingService:
                     max_replicas=max_replicas  # Use calculated value
                 )
             elif task.model_type == ModelType.TD3:
+                max_replicas = int(max_hardware["cpu"] / pod_usage["cpu"])
                 agent = TD3(
                     obs_dim=obs_dim,
                     act_dim=act_dim,
@@ -359,7 +360,8 @@ class TrainingService:
                         "lwmecps-testapp-server-bs2",
                         "lwmecps-testapp-server-bs3",
                         "lwmecps-testapp-server-bs4"
-                    ]
+                    ],
+                    max_replicas=max_replicas
                 )
             elif task.model_type == ModelType.SAC:
                 agent = SAC(
