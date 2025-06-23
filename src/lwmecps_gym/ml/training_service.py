@@ -438,10 +438,10 @@ class TrainingService:
 
             # Save model
             if task.model_type == ModelType.Q_LEARNING:
-                model_path = f"./models/q_table_{task_id}.pkl"
+                model_path = f"./models/model_{task.model_type.value}_{task_id}.pth"
                 agent.save_q_table(model_path)
             else:
-                model_path = f"./models/model_{task_id}.pth"
+                model_path = f"./models/model_{task.model_type.value}_{task_id}.pth"
                 logger.info(f"Attempting to save model to {model_path}")
                 agent.save_model(model_path)
                 
