@@ -204,8 +204,14 @@ class TD3:
         obs = self._flatten_observation(obs)
         state = torch.FloatTensor(obs).unsqueeze(0).to(self.device)
         action = self.actor(state).cpu().data.numpy().squeeze()
-        # Actions are discrete indices, ensure they're within valid range
-        action = np.clip(action, 0, self.max_replicas)
+        
+        # Add noise for exploration
+        noise = np.random.normal(0, self.noise, size=action.shape)
+        action = (action + noise).round()  # Round to nearest integer for discrete action
+        
+        # Clip to valid action range and ensure correct type
+        action = np.clip(action, 0, self.max_replicas).astype(np.int32)
+        
         return action
     
     def calculate_metrics(self, obs, action, reward, next_obs, info, actor_loss: Optional[float] = None, critic_loss: Optional[float] = None) -> Dict[str, float]:
