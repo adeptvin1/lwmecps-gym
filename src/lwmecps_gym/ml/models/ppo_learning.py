@@ -440,21 +440,19 @@ class PPO:
         avg_latency = info.get("latency", 0)
         
         metrics = {
+            "total_reward": reward,
+            "value": value,
+            "log_prob": log_prob,
             "accuracy": accuracy,
             "mse": mse,
             "mre": mre,
             "avg_latency": avg_latency,
-            "total_reward": reward,
-            "value": value,
-            "log_prob": log_prob
+            "actor_loss": actor_loss,
+            "critic_loss": critic_loss
         }
         
-        if actor_loss is not None:
-            metrics["actor_loss"] = actor_loss
-        if critic_loss is not None:
-            metrics["critic_loss"] = critic_loss
-            
-        return metrics
+        # Filter out None values
+        return {k: v for k, v in metrics.items() if v is not None}
 
     def update(self) -> Dict[str, float]:
         """Update policy based on collected data."""

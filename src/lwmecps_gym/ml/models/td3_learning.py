@@ -250,15 +250,13 @@ class TD3:
                 "q_value": q_value,
                 "cpu_usage": cpu_usage,
                 "ram_usage": ram_usage,
-                "network_usage": network_usage
+                "network_usage": network_usage,
+                "actor_loss": actor_loss,
+                "critic_loss": critic_loss
             }
             
-            if actor_loss is not None:
-                metrics["actor_loss"] = float(actor_loss)
-            if critic_loss is not None:
-                metrics["critic_loss"] = float(critic_loss)
-                
-            return metrics
+            # Filter out None values
+            return {k: v for k, v in metrics.items() if v is not None}
 
     def update(self, batch_size: int = None) -> Dict[str, float]:
         if batch_size is None:
