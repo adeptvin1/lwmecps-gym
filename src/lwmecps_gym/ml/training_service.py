@@ -735,6 +735,13 @@ class TrainingService:
 
         # Load model
         agent = self._get_agent(task, obs_dim, act_dim)
+        
+        # Manually set the correct deployments list for reconciliation
+        agent.deployments = task.parameters.get("deployments", [
+            "lwmecps-testapp-server-bs1", "lwmecps-testapp-server-bs2",
+            "lwmecps-testapp-server-bs3", "lwmecps-testapp-server-bs4"
+        ])
+        
         agent.load_model(model_path)
         
         total_reward = 0
