@@ -463,19 +463,30 @@ class TrainingService:
                 
             # Save model to wandb if run_id is provided
             if task.wandb_run_id:
+                # Fetch the latest task data to get updated metrics
+                latest_task_future = asyncio.run_coroutine_threadsafe(
+                    db_thread.get_training_task(task_id),
+                    loop
+                )
+                latest_task = latest_task_future.result()
+
                 logger.info(f"Saving model to wandb for task {task_id}")
+
+                # Ensure all metadata keys are strings before logging to wandb
+                metadata = {
+                    'model_type': latest_task.model_type.value,
+                    'total_episodes': latest_task.total_episodes,
+                    'parameters': convert_keys_to_str(latest_task.parameters),
+                    'env_config': convert_keys_to_str(latest_task.env_config),
+                    'model_config': convert_keys_to_str(latest_task.model_config),
+                    'training_metrics': convert_keys_to_str(latest_task.metrics)
+                }
+
                 artifact = wandb.Artifact(
-                    name=f'{task.model_type.value}_model_{task_id}',
+                    name=f'{latest_task.model_type.value}_model_{task_id}',
                     type='model',
-                    description=f'Model trained for {task.total_episodes} episodes',
-                    metadata={
-                        'model_type': task.model_type.value,
-                        'total_episodes': task.total_episodes,
-                        'parameters': task.parameters,
-                        'env_config': task.env_config,
-                        'model_config': task.model_config,
-                        'training_metrics': task.metrics
-                    }
+                    description=f'Model trained for {latest_task.total_episodes} episodes',
+                    metadata=metadata
                 )
                 artifact.add_file(model_path)
                 wandb.log_artifact(artifact)
@@ -483,6 +494,13 @@ class TrainingService:
 
             # Update task state
             task.state = TrainingState.COMPLETED
+
+            # Sanitize task dictionaries before final update
+            task.parameters = convert_keys_to_str(task.parameters)
+            task.env_config = convert_keys_to_str(task.env_config)
+            task.model_config = convert_keys_to_str(task.model_config)
+            task.metrics = convert_keys_to_str(task.metrics)
+
             future = asyncio.run_coroutine_threadsafe(
                 db_thread.update_training_task(task_id, task.model_dump()),
                 loop
