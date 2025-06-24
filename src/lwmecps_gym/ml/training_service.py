@@ -718,7 +718,7 @@ class TrainingService:
                 "lwmecps-testapp-server-bs3", "lwmecps-testapp-server-bs4"
             ]),
             max_pods=task.max_pods,
-            group_id=f"reco-{task.group_id}", # Use a different group_id for reconciliation
+            group_id=task.group_id,
             env_config={"base_url": task.base_url, "stabilization_time": task.stabilization_time}
         )
         
