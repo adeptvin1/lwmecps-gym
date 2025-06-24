@@ -37,7 +37,7 @@ class TrainingTask(BaseModel):
     model_type: ModelType
     parameters: Dict[str, Any] = Field(default_factory=dict)
     env_config: Dict[str, Any] = Field(default_factory=dict)
-    model_config: Dict[str, Any] = Field(default_factory=dict)
+    model_params: Dict[str, Any] = Field(default_factory=dict)
     state: TrainingState = TrainingState.PENDING
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

@@ -88,8 +88,8 @@ class TrainingService:
             task_data["parameters"] = convert_keys_to_str(task_data["parameters"])
         if "env_config" in task_data:
             task_data["env_config"] = convert_keys_to_str(task_data["env_config"])
-        if "model_config" in task_data:
-            task_data["model_config"] = convert_keys_to_str(task_data["model_config"])
+        if "model_params" in task_data:
+            task_data["model_params"] = convert_keys_to_str(task_data["model_params"])
             
         # Generate unique group_id for the experiment if not provided
         if "group_id" not in task_data:
@@ -102,7 +102,7 @@ class TrainingService:
             model_type=task_data["model_type"],
             parameters=task_data.get("parameters", {}),
             env_config=task_data.get("env_config", {}),
-            model_config=task_data.get("model_config", {}),
+            model_params=task_data.get("model_params", {}),
             state=task_data.get("state", TrainingState.PENDING),
             total_episodes=task_data.get("total_episodes", 100),
             group_id=task_data["group_id"],  # Ensure group_id is included
@@ -478,7 +478,7 @@ class TrainingService:
                     'total_episodes': latest_task.total_episodes,
                     'parameters': convert_keys_to_str(latest_task.parameters),
                     'env_config': convert_keys_to_str(latest_task.env_config),
-                    'model_config': convert_keys_to_str(latest_task.model_config),
+                    'model_params': convert_keys_to_str(latest_task.model_params),
                     'training_metrics': convert_keys_to_str(latest_task.metrics)
                 }
 
@@ -498,7 +498,7 @@ class TrainingService:
             # Sanitize task dictionaries before final update
             task.parameters = convert_keys_to_str(task.parameters)
             task.env_config = convert_keys_to_str(task.env_config)
-            task.model_config = convert_keys_to_str(task.model_config)
+            task.model_params = convert_keys_to_str(task.model_params)
             task.metrics = convert_keys_to_str(task.metrics)
 
             future = asyncio.run_coroutine_threadsafe(
