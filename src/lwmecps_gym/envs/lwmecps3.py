@@ -292,15 +292,27 @@ class LWMECPSEnv3(gym.Env):
                 for node in self.node_name:
                     self.state["nodes"][node]["avg_latency"] = float(latency)
             
+            # Get metrics from the test application
+            metrics = get_metrics(self.group_id, self.base_url)
+            latency = metrics["group"]["avg_latency"] if "group" in metrics and "avg_latency" in metrics["group"] else 0.0
+            throughput = metrics["group"]["throughput"] if "group" in metrics and "throughput" in metrics["group"] else 0.0
+
+            info = {
+                "latency": latency,
+                "throughput": throughput
+            }
+
             # Calculate reward
             reward = self._calculate_reward()
             self.logger.info(f"Calculated reward: {reward}")
             
-            # Check for termination conditions
-            terminated = False  # No specific termination condition yet
+            # Check for termination
+            terminated = reward < -500  # Terminate if reward is too low
+
+            # Check for truncation
             truncated = self.current_step >= self.max_episode_steps
             
-            return self.state, reward, terminated, truncated, {}
+            return self.state, reward, terminated, truncated, info
             
         except Exception as e:
             self.logger.error(f"Failed to execute step: {str(e)}")
