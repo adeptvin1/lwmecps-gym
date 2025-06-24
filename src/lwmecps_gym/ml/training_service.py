@@ -728,7 +728,7 @@ class TrainingService:
         obs_dim = 0
         for node in node_info:
             obs_dim += 4 
-            for _ in env.deployments:
+            for _ in env.unwrapped.deployments:
                 obs_dim += 5
             obs_dim += 1
         act_dim = env.action_space.shape[0]
