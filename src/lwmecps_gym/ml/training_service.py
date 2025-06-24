@@ -33,6 +33,13 @@ import os
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def convert_keys_to_str(data: Any) -> Any:
+    if isinstance(data, dict):
+        return {str(k): convert_keys_to_str(v) for k, v in data.items()}
+    if isinstance(data, list):
+        return [convert_keys_to_str(i) for i in data]
+    return data
+
 # Register the environment
 register(
     id="lwmecps-v3",
@@ -76,6 +83,14 @@ class TrainingService:
         Returns:
             Created TrainingTask instance
         """
+        # Sanitize dictionaries to ensure all keys are strings
+        if "parameters" in task_data:
+            task_data["parameters"] = convert_keys_to_str(task_data["parameters"])
+        if "env_config" in task_data:
+            task_data["env_config"] = convert_keys_to_str(task_data["env_config"])
+        if "model_config" in task_data:
+            task_data["model_config"] = convert_keys_to_str(task_data["model_config"])
+            
         # Generate unique group_id for the experiment if not provided
         if "group_id" not in task_data:
             task_data["group_id"] = f"training-{uuid.uuid4()}"
