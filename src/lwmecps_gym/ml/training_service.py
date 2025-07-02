@@ -108,7 +108,7 @@ class TrainingService:
             group_id=task_data["group_id"],  # Ensure group_id is included
             namespace=task_data.get("namespace", "lwmecps-testapp"),
             max_pods=task_data.get("max_pods", 50),
-            base_url=task_data.get("base_url", "http://34.51.182.183:8001"),
+            base_url=task_data.get("base_url", "http://34.51.188.160:8001"),
             stabilization_time=task_data.get("stabilization_time", 10)
         )
         return await self.db.create_training_task(task)
@@ -673,77 +673,63 @@ class TrainingService:
         if not os.path.exists(model_path):
             raise ValueError(f"Model file not found at {model_path}")
 
-        # --- Environment setup copied from _run_training ---
-        logger.info("Fetching Kubernetes cluster state for reconciliation...")
-        state = self.minikube.k8s_state()
-        if state is None:
-            raise Exception("Failed to get Kubernetes cluster state. No valid nodes found.")
-        
-        node_name = list(state.keys())
-        if not node_name:
-            raise Exception("No nodes found in cluster state.")
+        # NOTE: The reconciliation currently runs on the default environment
+        # configuration because the exact training configuration (e.g. deployments)
+        # is not saved. The model is therefore tested against an environment
+        # identical to the one it was trained in, not the live one.
 
-        max_hardware = {
-            "cpu": 8, "ram": 16000, "tx_bandwidth": 1000, "rx_bandwidth": 1000,
-            "read_disks_bandwidth": 500, "write_disks_bandwidth": 500, "avg_latency": 300
-        }
-        pod_usage = {
-            "cpu": 2, "ram": 2000, "tx_bandwidth": 20, "rx_bandwidth": 20,
-            "read_disks_bandwidth": 100, "write_disks_bandwidth": 100
-        }
+        # We are not getting the live deployments to ensure the action space matches the trained model.
+        # reco_deployments = self._get_reco_deployments(task.group_id)
 
-        node_info = {}
-        for node in node_name:
-            node_state = state[node]
-            cpu_value = int(node_state['cpu'])
-            memory_value = int(node_state['memory'].replace('Ki', ''))
-            node_info[node] = {
-                "cpu": cpu_value, "ram": round(bitmath.KiB(memory_value).to_MB().value),
-                "tx_bandwidth": 100, "rx_bandwidth": 100, "read_disks_bandwidth": 300,
-                "write_disks_bandwidth": 300, "avg_latency": 10 + (10 * list(node_name).index(node))
-            }
-        
-        # Create environment
-        logger.info("Creating environment for reconciliation")
+        # Use the original group_id and disable starting a new experiment
+        # to avoid conflicts with the testapp service.
         env = gym.make(
-            "lwmecps-v3",
-            node_name=list(node_info.keys()),
-            max_hardware=max_hardware,
-            pod_usage=pod_usage,
-            node_info=node_info,
-            num_nodes=len(node_info),
+            task.env_config.get("env_name", "Lwmecps-v3"),
             namespace=task.namespace,
-            deployments=task.parameters.get("deployments", [
-                "lwmecps-testapp-server-bs1", "lwmecps-testapp-server-bs2",
-                "lwmecps-testapp-server-bs3", "lwmecps-testapp-server-bs4"
-            ]),
-            max_pods=task.max_pods,
+            # deployments=reco_deployments, # This is intentionally commented out
+            start_experiment=False,
             group_id=task.group_id,
-            env_config={"base_url": task.base_url, "stabilization_time": task.stabilization_time}
+            stabilization_time=task.stabilization_time,
+            base_url=task.base_url,
         )
-        
-        obs, _ = env.reset()
 
-        # Calculate dimensions
-        obs_dim = 0
-        for node in node_info:
-            obs_dim += 4 
-            for _ in env.unwrapped.deployments:
-                obs_dim += 5
-            obs_dim += 1
-        act_dim = env.action_space.shape[0]
+        if isinstance(env.observation_space, gym.spaces.Discrete):
+            state_dim = env.observation_space.n
+            max_action = None
+        else:
+            state_dim = env.observation_space.shape[0]
+            action_dim = env.action_space.shape[0]
+            max_action = float(env.action_space.high[0])
 
-        # Load model
-        agent = self._get_agent(task, obs_dim, act_dim)
-        
-        # Manually set the correct deployments list for reconciliation
-        agent.deployments = task.parameters.get("deployments", [
-            "lwmecps-testapp-server-bs1", "lwmecps-testapp-server-bs2",
-            "lwmecps-testapp-server-bs3", "lwmecps-testapp-server-bs4"
-        ])
-        
+        agent = None
+        if task.model_type == ModelType.PPO:
+            agent = PPO(
+                state_dim=state_dim,
+                action_space=env.action_space,
+                hidden_size=task.parameters.get("hidden_size", 256),
+                lr=task.parameters.get("learning_rate", 3e-4),
+            )
+        elif task.model_type == ModelType.SAC:
+            agent = SAC(
+                state_dim=state_dim,
+                action_space=env.action_space,
+                hidden_size=task.parameters.get("hidden_size", 256),
+                lr=task.parameters.get("learning_rate", 0.0003),
+            )
+        elif task.model_type == ModelType.TD3:
+            agent = TD3(
+                state_dim=state_dim,
+                action_dim=action_dim,
+                max_action=max_action,
+                hidden_size=task.parameters.get("hidden_size", 256),
+                lr=task.parameters.get("learning_rate", 3e-4),
+            )
+
+        if agent is None:
+            raise ValueError(f"Unknown model type: {task.model_type}")
+
         agent.load_model(model_path)
-        
+
         total_reward = 0
         for _ in range(sample_size):
             action = agent.select_action(obs)
