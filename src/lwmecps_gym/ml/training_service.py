@@ -506,7 +506,7 @@ class TrainingService:
                 loop
             )
             future.result()
-
+            
         except Exception as e:
             logger.error(f"Error in training process for task {task_id}: {str(e)}")
             task.state = TrainingState.FAILED
@@ -516,14 +516,16 @@ class TrainingService:
                     loop
                 )
                 future.result()
-            finish_wandb()
         finally:
+            # Cleanup resources and finish wandb session
             self.active_tasks[task_id] = False
             if env:
                 env.close()
             if db_thread:
                 future = asyncio.run_coroutine_threadsafe(db_thread.close(), loop)
                 future.result()
+            # Always finish wandb session to prevent session leakage
+            finish_wandb()
 
     async def update_training_progress(self, task_id: str, episode: int, progress: float, db_connection=None):
         """Update the progress of a training task."""
