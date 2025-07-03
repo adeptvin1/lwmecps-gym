@@ -517,6 +517,7 @@ class PPO:
         return {
             "actor_loss": total_actor_loss / num_updates,
             "critic_loss": total_critic_loss / num_updates,
+            "total_loss": (total_actor_loss + total_critic_loss) / num_updates,
             "entropy": total_entropy / num_updates
         }
 
@@ -562,16 +563,28 @@ class PPO:
             # Update the policy
             update_metrics = self.update()
 
-            # Log average metrics for the episode
-            avg_metrics = self.metrics_collector.get_average_metrics()
-            if wandb_run_id:
-                log_metrics(avg_metrics, step=episode)
-
             # Store episode metrics
             episode_rewards.append(ep_reward)
             episode_lengths.append(ep_len)
-            actor_losses.append(avg_metrics.get("actor_loss", 0))
-            critic_losses.append(avg_metrics.get("critic_loss", 0))
+            actor_losses.append(update_metrics.get("actor_loss", 0))
+            critic_losses.append(update_metrics.get("critic_loss", 0))
+            
+            # Calculate running averages
+            mean_reward = np.mean(episode_rewards[-100:])  # Last 100 episodes
+            mean_length = np.mean(episode_lengths[-100:])  # Last 100 episodes
+            
+            # Log metrics to wandb (similar to SAC and TD3)
+            if wandb_run_id:
+                wandb.log({
+                    "episode_reward": ep_reward,
+                    "episode_length": ep_len,
+                    "actor_loss": update_metrics.get("actor_loss", 0),
+                    "critic_loss": update_metrics.get("critic_loss", 0),
+                    "total_loss": update_metrics.get("total_loss", 0),
+                    "mean_reward": mean_reward,
+                    "mean_length": mean_length,
+                    "episode": episode
+                })
             
             # Print progress
             logger.info(
