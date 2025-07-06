@@ -235,8 +235,8 @@ class TD3:
             # Calculate MRE (Mean Relative Error)
             mre = float(abs(reward - q_value) / (abs(reward) + 1e-6))
             
-            # Get metrics from info
-            avg_latency = float(info.get("latency", 0))
+            # Get metrics from info and take absolute value
+            avg_latency = abs(float(info.get("latency", 0)))
             cpu_usage = float(info.get("cpu_usage", 0))
             ram_usage = float(info.get("ram_usage", 0))
             network_usage = float(info.get("network_usage", 0))

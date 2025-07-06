@@ -151,8 +151,8 @@ class SAC:
         
         # Initialize entropy tuning
         if self.auto_entropy:
-            self.target_entropy = -np.prod((act_dim,)).item()
-            self.log_alpha = torch.zeros(1, requires_grad=True, device=self.device)
+            self.target_entropy = -np.prod((act_dim,)).item() * 0.5  # Increase target entropy for more exploration
+            self.log_alpha = torch.ones(1, requires_grad=True, device=self.device)  # Start with higher alpha
             self.alpha_optimizer = torch.optim.Adam([self.log_alpha], lr=lr)
         
         # Initialize replay buffer
@@ -244,8 +244,8 @@ class SAC:
             # Calculate MRE (Mean Relative Error)
             mre = abs(reward - q_value) / (abs(reward) + 1e-6)
             
-            # Get latency from info
-            avg_latency = info.get("latency", 0)
+            # Get latency from info and take absolute value
+            avg_latency = abs(info.get("latency", 0))
             
             metrics = {
                 "total_reward": reward,

@@ -127,8 +127,8 @@ class DQNAgent:
         # Calculate MRE (Mean Relative Error)
         mre = abs(reward - current_q) / (abs(reward) + 1e-6)
         
-        # Get latency from info
-        avg_latency = info.get("latency", 0)
+        # Get latency from info and take absolute value
+        avg_latency = abs(info.get("latency", 0))
         
         metrics = {
             "accuracy": accuracy,
