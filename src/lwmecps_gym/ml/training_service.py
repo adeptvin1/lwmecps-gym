@@ -108,7 +108,7 @@ class TrainingService:
             group_id=task_data["group_id"],  # Ensure group_id is included
             namespace=task_data.get("namespace", "lwmecps-testapp"),
             max_pods=task_data.get("max_pods", 50),
-            base_url=task_data.get("base_url", "http://34.51.188.160:8001"),
+            base_url=task_data.get("base_url", "http://34.51.217.76:8001"),
             stabilization_time=task_data.get("stabilization_time", 10)
         )
         return await self.db.create_training_task(task)

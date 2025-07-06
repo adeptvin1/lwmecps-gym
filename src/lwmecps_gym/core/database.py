@@ -21,7 +21,7 @@ class DatabaseSettings(BaseSettings):
 
 class Database:
     def __init__(self):
-        mongodb_url = os.getenv("MONGODB_URL", "mongodb://admin:password@34.51.188.160:27017")
+        mongodb_url = os.getenv("MONGODB_URL", "mongodb://admin:password@34.51.217.76:27017")
         database_name = os.getenv("MONGODB_DATABASE", "lwmecps_gym")
         logger.info(f"Connecting to MongoDB at: {mongodb_url}")
         self.client = AsyncIOMotorClient(mongodb_url)
