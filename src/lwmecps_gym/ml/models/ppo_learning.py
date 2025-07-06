@@ -540,12 +540,21 @@ class PPO:
         episode_lengths = []
         actor_losses = []
         critic_losses = []
+        
+        # Unified metrics tracking
+        episode_latencies = []
+        episode_success_counts = []
+        convergence_threshold = 50  # Target reward for convergence
+        steps_to_convergence = None
+        convergence_achieved = False
+        total_steps = 0
 
         for episode in range(1, total_episodes + 1):
             obs, info = env.reset()
             done = False
             ep_reward = 0
             ep_len = 0
+            ep_latencies = []
 
             while not done:
                 action, log_prob, value = self.select_action(obs)
@@ -556,6 +565,11 @@ class PPO:
                 obs = next_obs
                 ep_reward += reward
                 ep_len += 1
+                total_steps += 1
+                
+                # Collect task-specific metrics
+                if 'latency' in info:
+                    ep_latencies.append(info['latency'])
 
                 if done:
                     break
@@ -573,16 +587,46 @@ class PPO:
             mean_reward = np.mean(episode_rewards[-100:])  # Last 100 episodes
             mean_length = np.mean(episode_lengths[-100:])  # Last 100 episodes
             
+            # Task-specific metrics
+            avg_latency = np.mean(ep_latencies) if ep_latencies else 0.0
+            episode_latencies.extend(ep_latencies)
+            success_rate = 1.0 if ep_reward > 0 else 0.0  # Success if positive reward
+            episode_success_counts.append(success_rate)
+            
+            # Calculate training stability
+            training_stability = np.std(episode_rewards[-100:]) if len(episode_rewards) >= 10 else 0.0
+            
+            # Check convergence
+            if not convergence_achieved and mean_reward >= convergence_threshold:
+                steps_to_convergence = total_steps
+                convergence_achieved = True
+            
             # Log metrics to wandb (similar to SAC and TD3)
             if wandb_run_id:
+                # Extract entropy coefficient as exploration rate
+                exploration_rate = self.ent_coef  # PPO exploration rate
+                
+                # Unified logging structure
                 wandb.log({
-                    "episode_reward": ep_reward,
-                    "episode_length": ep_len,
-                    "actor_loss": update_metrics.get("actor_loss", 0),
-                    "critic_loss": update_metrics.get("critic_loss", 0),
-                    "total_loss": update_metrics.get("total_loss", 0),
-                    "mean_reward": mean_reward,
-                    "mean_length": mean_length,
+                    # Core training metrics
+                    "train/episode_reward": ep_reward,
+                    "train/episode_reward_avg": mean_reward,
+                    "train/actor_loss": update_metrics.get("actor_loss", 0),
+                    "train/critic_loss": update_metrics.get("critic_loss", 0),
+                    "train/exploration_rate": exploration_rate,  # PPO exploration rate
+                    "train/training_stability": training_stability,
+                    
+                    # Task-specific metrics
+                    "task/avg_latency": avg_latency,
+                    "task/success_rate": success_rate,
+                    
+                    # Comparison metrics
+                    "comparison/steps_to_convergence": steps_to_convergence if steps_to_convergence else 0,
+                    
+                    # Additional metrics
+                    "train/episode_length": ep_len,
+                    "train/total_loss": update_metrics.get("total_loss", 0),
+                    "train/mean_length": mean_length,
                     "episode": episode
                 })
             
@@ -590,7 +634,8 @@ class PPO:
             logger.info(
                 f"Episode {episode}/{total_episodes}, "
                 f"Reward: {ep_reward:.2f}, "
-                f"Length: {ep_len}"
+                f"Length: {ep_len}, "
+                f"Latency: {avg_latency:.2f}"
             )
             
             # Update progress in the database
@@ -621,7 +666,9 @@ class PPO:
             "critic_losses": critic_losses,
             "total_losses": total_losses,
             "mean_rewards": mean_rewards,
-            "mean_lengths": mean_lengths
+            "mean_lengths": mean_lengths,
+            "steps_to_convergence": steps_to_convergence,
+            "final_success_rate": np.mean(episode_success_counts) if episode_success_counts else 0.0
         }
 
     def save_model(self, path: str):

@@ -695,63 +695,156 @@ class TrainingService:
             base_url=task.base_url,
         )
 
+        # Calculate dimensions properly for each algorithm
         if isinstance(env.observation_space, gym.spaces.Discrete):
-            state_dim = env.observation_space.n
-            max_action = None
+            obs_dim = env.observation_space.n
+            act_dim = 1  # Discrete action space
         else:
-            state_dim = env.observation_space.shape[0]
-            action_dim = env.action_space.shape[0]
-            max_action = float(env.action_space.high[0])
+            # For Dict observation space, calculate flattened dimension
+            obs_dim = 0
+            if hasattr(env.observation_space, 'spaces') and 'nodes' in env.observation_space.spaces:
+                # Count dimensions from LWMECPSEnv3 structure
+                node_count = len(env.unwrapped.node_name) if hasattr(env.unwrapped, 'node_name') else 1
+                deployment_count = len(env.unwrapped.deployments) if hasattr(env.unwrapped, 'deployments') else 4
+                obs_dim = node_count * (4 + deployment_count * 5 + 1)  # CPU, RAM, TX, RX + deployments + latency
+            else:
+                obs_dim = env.observation_space.shape[0] if hasattr(env.observation_space, 'shape') else 100
+            
+            act_dim = env.action_space.shape[0] if hasattr(env.action_space, 'shape') else len(env.unwrapped.deployments) if hasattr(env.unwrapped, 'deployments') else 4
 
+        # Create agent with correct parameters
         agent = None
         if task.model_type == ModelType.PPO:
             agent = PPO(
-                state_dim=state_dim,
-                action_space=env.action_space,
+                obs_dim=obs_dim,
+                act_dim=act_dim,
                 hidden_size=task.parameters.get("hidden_size", 256),
                 lr=task.parameters.get("learning_rate", 3e-4),
+                gamma=task.parameters.get("discount_factor", 0.99),
+                lam=task.parameters.get("lambda", 0.95),
+                clip_eps=task.parameters.get("clip_epsilon", 0.2),
+                ent_coef=task.parameters.get("entropy_coef", 0.01),
+                vf_coef=task.parameters.get("value_function_coef", 0.5),
+                n_steps=task.parameters.get("n_steps", 2048),
+                batch_size=task.parameters.get("batch_size", 64),
+                n_epochs=task.parameters.get("n_epochs", 10),
+                device=task.parameters.get("device", "cpu"),
+                deployments=getattr(env.unwrapped, 'deployments', ["mec-test-app"]),
+                max_replicas=task.parameters.get("max_replicas", 10)
             )
         elif task.model_type == ModelType.SAC:
             agent = SAC(
-                state_dim=state_dim,
-                action_space=env.action_space,
+                obs_dim=obs_dim,
+                act_dim=act_dim,
                 hidden_size=task.parameters.get("hidden_size", 256),
-                lr=task.parameters.get("learning_rate", 0.0003),
+                lr=task.parameters.get("learning_rate", 3e-4),
+                gamma=task.parameters.get("discount_factor", 0.99),
+                tau=task.parameters.get("tau", 0.005),
+                alpha=task.parameters.get("alpha", 0.2),
+                auto_entropy=task.parameters.get("auto_entropy", True),
+                target_entropy=task.parameters.get("target_entropy", -1.0),
+                batch_size=task.parameters.get("batch_size", 256),
+                device=task.parameters.get("device", "cpu"),
+                deployments=getattr(env.unwrapped, 'deployments', ["mec-test-app"]),
+                max_replicas=task.parameters.get("max_replicas", 10)
             )
         elif task.model_type == ModelType.TD3:
             agent = TD3(
-                state_dim=state_dim,
-                action_dim=action_dim,
-                max_action=max_action,
+                obs_dim=obs_dim,
+                act_dim=act_dim,
                 hidden_size=task.parameters.get("hidden_size", 256),
                 lr=task.parameters.get("learning_rate", 3e-4),
+                gamma=task.parameters.get("discount_factor", 0.99),
+                tau=task.parameters.get("tau", 0.005),
+                policy_delay=task.parameters.get("policy_delay", 2),
+                noise_clip=task.parameters.get("noise_clip", 0.5),
+                noise=task.parameters.get("noise", 0.2),
+                batch_size=task.parameters.get("batch_size", 256),
+                device=task.parameters.get("device", "cpu"),
+                deployments=getattr(env.unwrapped, 'deployments', ["mec-test-app"]),
+                max_replicas=task.parameters.get("max_replicas", 10)
             )
 
         if agent is None:
             raise ValueError(f"Unknown model type: {task.model_type}")
 
+        # Load trained model
         agent.load_model(model_path)
 
+        # Initialize wandb for inference logging
+        init_wandb(self.wandb_config, f"inference_{task.name}_{task_id}")
+
+        # Run inference loop
+        obs, _ = env.reset()  # FIXED: Initialize obs properly
         total_reward = 0
-        for _ in range(sample_size):
+        latencies = []
+        throughputs = []
+        success_count = 0
+        rewards = []
+
+        for step in range(sample_size):
             action = agent.select_action(obs)
             obs, reward, terminated, truncated, info = env.step(action)
+            
+            # Collect metrics
             total_reward += reward
+            rewards.append(reward)
+            latencies.append(info.get("latency", 0.0))
+            throughputs.append(info.get("throughput", 0.0))
+            
+            # Count success (you can adjust this criteria)
+            if reward > 0:  # Positive reward indicates success
+                success_count += 1
+                
             if terminated or truncated:
                 obs, _ = env.reset()
                 
         env.close()
         
-        metrics = {"avg_reward": total_reward / sample_size}
+        # Calculate comprehensive inference metrics
+        avg_reward = total_reward / sample_size
+        avg_latency = np.mean(latencies) if latencies else 0.0
+        avg_throughput = np.mean(throughputs) if throughputs else 0.0
+        success_rate = success_count / sample_size
+        latency_std = np.std(latencies) if latencies else 0.0
+        reward_std = np.std(rewards) if rewards else 0.0
+        
+        # Calculate adaptation score (how well model performs compared to random baseline)
+        # Assuming random baseline would get negative rewards
+        adaptation_score = max(0.0, (avg_reward + 100) / 100)  # Normalize to [0, 1+]
+        
+        metrics = {
+            "avg_reward": float(avg_reward),
+            "avg_latency": float(avg_latency),
+            "avg_throughput": float(avg_throughput),
+            "success_rate": float(success_rate),
+            "latency_std": float(latency_std),
+            "reward_std": float(reward_std),
+            "adaptation_score": float(adaptation_score)
+        }
+
+        # Log inference metrics to wandb
+        wandb.log({
+            "inference/avg_reward": avg_reward,
+            "inference/avg_latency": avg_latency,
+            "inference/avg_throughput": avg_throughput,
+            "inference/success_rate": success_rate,
+            "inference/latency_stability": latency_std,
+            "inference/adaptation_score": adaptation_score,
+            "inference/sample_size": sample_size
+        })
         
         result = ReconciliationResult(
             task_id=task_id,
             model_type=task.model_type,
-            wandb_run_id=task.wandb_run_id,
+            wandb_run_id=wandb.run.id,
             metrics=metrics,
             sample_size=sample_size,
             model_weights_path=model_path
         )
+        
+        # Finish wandb run
+        finish_wandb()
         
         return await self.db.save_reconciliation_result(result)
         

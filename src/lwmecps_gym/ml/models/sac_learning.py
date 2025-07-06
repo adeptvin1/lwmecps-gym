@@ -383,6 +383,13 @@ class SAC:
         episode_reward = 0
         episode_length = 0
         episode_num = 0
+        
+        # Unified metrics tracking
+        episode_latencies = []
+        episode_success_counts = []
+        convergence_threshold = 50  # Target reward for convergence
+        steps_to_convergence = None
+        convergence_achieved = False
 
         for t in range(1, total_episodes * env.spec.max_episode_steps + 1):
             action = self.select_action(obs)
@@ -397,6 +404,10 @@ class SAC:
             obs = next_obs
             episode_reward += reward
             episode_length += 1
+            
+            # Collect task-specific metrics
+            if 'latency' in info:
+                episode_latencies.append(info['latency'])
 
             # Update networks
             update_metrics = self.update()
@@ -414,26 +425,52 @@ class SAC:
                 self.mean_rewards.append(np.mean(self.episode_rewards[-100:]))
                 self.mean_lengths.append(np.mean(self.episode_lengths[-100:]))
 
+                # Task-specific metrics
+                avg_latency = np.mean(episode_latencies) if episode_latencies else 0.0
+                success_rate = 1.0 if episode_reward > 0 else 0.0  # Success if positive reward
+                episode_success_counts.append(success_rate)
+                
+                # Calculate training stability
+                training_stability = np.std(self.episode_rewards[-100:]) if len(self.episode_rewards) >= 10 else 0.0
+                
+                # Check convergence
+                if not convergence_achieved and self.mean_rewards[-1] >= convergence_threshold:
+                    steps_to_convergence = t
+                    convergence_achieved = True
+
                 print(
                     f"Episode: {episode_num}/{total_episodes}, "
                     f"Reward: {episode_reward:.2f}, "
                     f"Length: {episode_length}, "
                     f"Actor Loss: {update_metrics['actor_loss']:.3f}, "
                     f"Critic Loss: {update_metrics['critic_loss']:.3f}, "
-                    f"Alpha: {self.alpha:.3f}"
+                    f"Alpha: {self.alpha:.3f}, "
+                    f"Latency: {avg_latency:.2f}"
                 )
 
                 if wandb_run_id:
+                    # Unified logging structure
                     wandb.log({
-                        "episode_reward": episode_reward,
-                        "episode_length": episode_length,
-                        "actor_loss": update_metrics["actor_loss"],
-                        "critic_loss": update_metrics["critic_loss"],
-                        "alpha_loss": update_metrics["alpha_loss"],
-                        "total_loss": update_metrics["total_loss"],
-                        "mean_reward": self.mean_rewards[-1],
-                        "mean_length": self.mean_lengths[-1],
-                        "alpha": self.alpha,
+                        # Core training metrics
+                        "train/episode_reward": episode_reward,
+                        "train/episode_reward_avg": self.mean_rewards[-1],
+                        "train/actor_loss": update_metrics["actor_loss"],
+                        "train/critic_loss": update_metrics["critic_loss"],
+                        "train/exploration_rate": self.alpha,  # SAC exploration rate
+                        "train/training_stability": training_stability,
+                        
+                        # Task-specific metrics
+                        "task/avg_latency": avg_latency,
+                        "task/success_rate": success_rate,
+                        
+                        # Comparison metrics
+                        "comparison/steps_to_convergence": steps_to_convergence if steps_to_convergence else 0,
+                        
+                        # Additional metrics
+                        "train/episode_length": episode_length,
+                        "train/alpha_loss": update_metrics["alpha_loss"],
+                        "train/total_loss": update_metrics["total_loss"],
+                        "train/mean_length": self.mean_lengths[-1],
                         "episode": episode_num
                     })
 
@@ -441,6 +478,7 @@ class SAC:
                 obs, _ = env.reset()
                 episode_reward = 0
                 episode_length = 0
+                episode_latencies = []
                 
                 if episode_num >= total_episodes:
                     break
@@ -453,7 +491,9 @@ class SAC:
             "alpha_losses": self.alpha_losses,
             "total_losses": self.total_losses,
             "mean_rewards": self.mean_rewards,
-            "mean_lengths": self.mean_lengths
+            "mean_lengths": self.mean_lengths,
+            "steps_to_convergence": steps_to_convergence,
+            "final_success_rate": np.mean(episode_success_counts) if episode_success_counts else 0.0
         }
     
     def save_model(self, path: str):
