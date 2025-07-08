@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import List, Dict, Any, Optional
 from ...core.models import TrainingTask, TrainingResult, ReconciliationResult
 from ...core.database import Database
@@ -114,12 +114,35 @@ async def get_training_results(
 @router.post("/tasks/{task_id}/reconcile", response_model=ReconciliationResult)
 async def run_reconciliation(
     task_id: str,
-    sample_size: int,
+    sample_size: int = Query(
+        ..., 
+        description="Количество шагов для выполнения reconciliation",
+        example=100,
+        ge=1
+    ),
+    group_id: Optional[str] = Query(
+        None, 
+        description="ID группы экспериментов для reconciliation. Если не указан, используется group_id из задачи обучения",
+        example="reconciliation-group-1"
+    ),
     service: TrainingService = Depends(get_training_service)
 ):
-    """Run model reconciliation on new data"""
+    """
+    Запуск reconciliation для обученной модели
+    
+    Выполняет процесс reconciliation для проверки работы обученной модели 
+    на новых данных или в новой среде.
+    
+    Args:
+        task_id: ID задачи обучения
+        sample_size: Количество шагов для выполнения
+        group_id: Опциональный ID группы экспериментов
+        
+    Returns:
+        Результат reconciliation с метриками производительности
+    """
     try:
-        return await service.run_reconciliation(task_id, sample_size)
+        return await service.run_reconciliation(task_id, sample_size, group_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 

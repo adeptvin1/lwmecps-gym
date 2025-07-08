@@ -85,13 +85,30 @@ class TrainingResult(BaseModel):
 class ReconciliationResult(BaseModel):
     """MongoDB model for model reconciliation results"""
     id: Optional[PyObjectId] = Field(default=None, alias="_id")
-    task_id: PyObjectId
-    model_type: ModelType
-    wandb_run_id: str
-    metrics: Dict[str, float]
-    sample_size: int
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
-    model_weights_path: str
+    task_id: PyObjectId = Field(description="ID исходной задачи обучения")
+    model_type: ModelType = Field(description="Тип модели (ppo, sac, td3, dqn)")
+    wandb_run_id: str = Field(description="ID запуска в Weights & Biases для reconciliation")
+    metrics: Dict[str, float] = Field(
+        description="Метрики производительности модели", 
+        example={
+            "avg_reward": 85.5,
+            "avg_latency": 0.12,
+            "avg_throughput": 150.0,
+            "success_rate": 0.92,
+            "latency_std": 0.02,
+            "reward_std": 12.3,
+            "adaptation_score": 0.85
+        }
+    )
+    sample_size: int = Field(description="Количество выполненных шагов", example=100)
+    timestamp: datetime = Field(
+        default_factory=datetime.utcnow, 
+        description="Время завершения reconciliation"
+    )
+    model_weights_path: str = Field(
+        description="Путь к файлу весов модели",
+        example="./models/model_ppo_64f1b2a3c9d4e5f6a7b8c9d0.pth"
+    )
 
     model_config = {
         "allow_population_by_field_name": True,

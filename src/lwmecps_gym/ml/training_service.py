@@ -653,13 +653,14 @@ class TrainingService:
             "wandb_run_id": task.wandb_run_id
         }
     
-    async def run_reconciliation(self, task_id: str, sample_size: int) -> ReconciliationResult:
+    async def run_reconciliation(self, task_id: str, sample_size: int, group_id: Optional[str] = None) -> ReconciliationResult:
         """
         Run model reconciliation on new data.
         
         Args:
             task_id: Unique identifier of the training task
             sample_size: The number of steps to run the reconciliation for
+            group_id: Optional group ID to use for reconciliation. If not provided, uses task's group_id
             
         Returns:
             ReconciliationResult instance
@@ -683,14 +684,18 @@ class TrainingService:
         # We are not getting the live deployments to ensure the action space matches the trained model.
         # reco_deployments = self._get_reco_deployments(task.group_id)
 
-        # Use the original group_id and disable starting a new experiment
+        # Use provided group_id or fallback to task's original group_id
+        reconciliation_group_id = group_id if group_id is not None else task.group_id
+        logger.info(f"Running reconciliation for task {task_id} with group_id: {reconciliation_group_id}")
+        
+        # Use the group_id and disable starting a new experiment
         # to avoid conflicts with the testapp service.
         env = gym.make(
             task.env_config.get("env_name", "Lwmecps-v3"),
             namespace=task.namespace,
             # deployments=reco_deployments, # This is intentionally commented out
             start_experiment=False,
-            group_id=task.group_id,
+            group_id=reconciliation_group_id,
             stabilization_time=task.stabilization_time,
             base_url=task.base_url,
         )

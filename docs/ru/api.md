@@ -107,6 +107,68 @@ POST /api/v1/training/{task_id}/cancel
 }
 ```
 
+#### Запуск reconciliation модели
+
+```http
+POST /api/v1/training/{task_id}/reconcile
+```
+
+Запускает процесс reconciliation для обученной модели с новыми данными.
+
+**Параметры пути:**
+- `task_id` (string, required) - ID задачи обучения
+
+**Параметры запроса:**
+- `sample_size` (integer, required) - количество шагов для выполнения reconciliation
+- `group_id` (string, optional) - ID группы экспериментов для reconciliation. Если не указан, используется group_id из задачи обучения
+
+**Пример запроса:**
+```http
+POST /api/v1/training/64f1b2a3c9d4e5f6a7b8c9d0/reconcile?sample_size=100&group_id=reconciliation-group-1
+```
+
+**Ответ:**
+```json
+{
+  "task_id": "64f1b2a3c9d4e5f6a7b8c9d0",
+  "model_type": "ppo",
+  "wandb_run_id": "abc123def456",
+  "metrics": {
+    "avg_reward": 85.5,
+    "avg_latency": 0.12,
+    "avg_throughput": 150.0,
+    "success_rate": 0.92,
+    "latency_std": 0.02,
+    "reward_std": 12.3,
+    "adaptation_score": 0.85
+  },
+  "sample_size": 100,
+  "timestamp": "2024-03-20T12:45:00Z",
+  "model_weights_path": "./models/model_ppo_64f1b2a3c9d4e5f6a7b8c9d0.pth"
+}
+```
+
+**Описание полей ответа:**
+- `task_id` - ID исходной задачи обучения
+- `model_type` - тип модели (ppo, sac, td3, dqn)
+- `wandb_run_id` - ID запуска в Weights & Biases для reconciliation
+- `metrics` - метрики производительности модели:
+  - `avg_reward` - средняя награда за эпизод
+  - `avg_latency` - средняя задержка (мс)
+  - `avg_throughput` - средняя пропускная способность (запросов/сек)
+  - `success_rate` - доля успешных шагов (0-1)
+  - `latency_std` - стандартное отклонение задержки
+  - `reward_std` - стандартное отклонение награды
+  - `adaptation_score` - оценка адаптации модели к новой среде (0-1+)
+- `sample_size` - количество выполненных шагов
+- `timestamp` - время завершения reconciliation
+- `model_weights_path` - путь к файлу весов модели
+
+**Коды ошибок:**
+- `404` - Задача не найдена или модель не обучена
+- `400` - Неверные параметры запроса
+- `500` - Ошибка во время выполнения reconciliation
+
 ### Управление моделями
 
 #### Список моделей
@@ -353,6 +415,18 @@ response = requests.post(
         }
     }
 )
+
+# Запуск reconciliation
+response = requests.post(
+    f"{API_URL}/training/{task_id}/reconcile",
+    headers=headers,
+    params={
+        "sample_size": 100,
+        "group_id": "reconciliation-group-1"  # Опционально
+    }
+)
+reconciliation_result = response.json()
+print(f"Reconciliation completed with avg_reward: {reconciliation_result['metrics']['avg_reward']}")
 ```
 
 ### cURL
@@ -387,4 +461,9 @@ curl -X POST "http://localhost:8000/api/v1/models/model-id/deploy" \
       "memory": "1Gi"
     }
   }'
+
+# Запуск reconciliation
+curl -X POST "http://localhost:8000/api/v1/training/task-id/reconcile" \
+  -H "Authorization: Bearer your-token" \
+  -d 'sample_size=100&group_id=reconciliation-group-1'
 ``` 
