@@ -697,10 +697,25 @@ class TrainingService:
         reconciliation_group_id = group_id if group_id is not None else task.group_id
         logger.info(f"Running reconciliation for task {task_id} with group_id: {reconciliation_group_id}")
         
-        # Default parameters for reconciliation environment
-        # The environment will get current k8s state automatically
-        default_node_name = ["node1"]
-        default_max_hardware = {
+        # Get Kubernetes state - same approach as in training
+        logger.info("Fetching Kubernetes cluster state...")
+        state = self.minikube.k8s_state()
+        logger.info(f"Received state: {state}")
+        
+        if state is None:
+            raise Exception("Failed to get Kubernetes cluster state. No valid nodes found.")
+        
+        if not isinstance(state, dict):
+            raise Exception(f"Invalid state type: {type(state)}. Expected dict.")
+            
+        node_name = list(state.keys())
+        logger.info(f"Found nodes: {node_name}")
+        
+        if not node_name:
+            raise Exception("No nodes found in cluster state.")
+
+        # Базовые параметры
+        max_hardware = {
             "cpu": 8,
             "ram": 16000,
             "tx_bandwidth": 1000,
@@ -709,7 +724,8 @@ class TrainingService:
             "write_disks_bandwidth": 500,
             "avg_latency": 300,
         }
-        default_pod_usage = {
+
+        pod_usage = {
             "cpu": 2,
             "ram": 2000,
             "tx_bandwidth": 20,
@@ -717,26 +733,71 @@ class TrainingService:
             "read_disks_bandwidth": 100,
             "write_disks_bandwidth": 100,
         }
-        default_node_info = {
-            "node1": {
-                "cpu": 8,
-                "memory": 16000,
-                "tx_bandwidth": 1000,
-                "rx_bandwidth": 1000,
-                "read_disks_bandwidth": 500,
-                "write_disks_bandwidth": 500,
-                "avg_latency": 300,
-            }
-        }
+
+        # Создаем информацию о узлах - same approach as in training
+        node_info = {}
+        for node in node_name:
+            try:
+                logger.info(f"Processing node {node}")
+                if node not in state:
+                    logger.warning(f"Node {node} not found in state. Skipping.")
+                    continue
+                    
+                node_state = state[node]
+                logger.info(f"Node state: {node_state}")
+                
+                if not isinstance(node_state, dict):
+                    logger.warning(f"Invalid node state type for {node}: {type(node_state)}. Skipping.")
+                    continue
+                    
+                if not all(key in node_state for key in ['cpu', 'memory']):
+                    logger.warning(f"Node {node} is missing required fields. Found keys: {list(node_state.keys())}")
+                    continue
+
+                # Extract CPU value
+                cpu_value = node_state['cpu']
+                if isinstance(cpu_value, str):
+                    cpu_value = int(cpu_value)
+                
+                # Extract memory value
+                memory_value = node_state['memory']
+                if isinstance(memory_value, str):
+                    # Remove 'Ki' suffix and convert to integer
+                    memory_value = memory_value.replace('Ki', '')
+                    try:
+                        memory_value = int(memory_value)
+                    except ValueError:
+                        logger.warning(f"Could not convert memory value {memory_value} to integer. Skipping node {node}.")
+                        continue
+
+                node_info[node] = {
+                    "cpu": cpu_value,
+                    "ram": round(bitmath.KiB(memory_value).to_MB().value),
+                    "tx_bandwidth": 100,
+                    "rx_bandwidth": 100,
+                    "read_disks_bandwidth": 300,
+                    "write_disks_bandwidth": 300,
+                    "avg_latency": 10 + (10 * list(node_name).index(node)),
+                }
+                logger.info(f"Created node info for {node}: {node_info[node]}")
+            except Exception as e:
+                logger.error(f"Error processing node {node}: {str(e)}")
+                continue
+
+        if not node_info:
+            raise Exception("No valid nodes could be processed")
+
+        logger.info(f"Final node_info: {node_info}")
         
         # Create environment for reconciliation
+        logger.info("Creating environment")
         env = gym.make(
             task.env_config.get("env_name", "lwmecps-v3"),
-            node_name=default_node_name,
-            max_hardware=default_max_hardware,
-            pod_usage=default_pod_usage,
-            node_info=default_node_info,
-            num_nodes=len(default_node_name),
+            node_name=list(node_info.keys()),
+            max_hardware=max_hardware,
+            pod_usage=pod_usage,
+            node_info=node_info,
+            num_nodes=len(node_info),
             namespace=task.namespace,
             deployments=saved_deployments,  # Use deployments from saved model
             max_pods=task.max_pods,
@@ -744,6 +805,7 @@ class TrainingService:
             base_url=task.base_url,
             stabilization_time=task.stabilization_time
         )
+        logger.info("Environment created successfully")
 
         # Use dimensions from saved model instead of calculating from environment
         obs_dim = saved_obs_dim
