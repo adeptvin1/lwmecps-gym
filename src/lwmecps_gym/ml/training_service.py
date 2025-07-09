@@ -453,6 +453,7 @@ class TrainingService:
                     future.result()
 
             # Save model
+            os.makedirs("./models", exist_ok=True)  # Ensure models directory exists
             if task.model_type == ModelType.Q_LEARNING:
                 model_path = f"./models/model_{task.model_type.value}_{task_id}.pth"
                 agent.save_q_table(model_path)
@@ -494,6 +495,7 @@ class TrainingService:
 
             # Update task state
             task.state = TrainingState.COMPLETED
+            task.model_path = model_path  # Save model path to task
 
             # Sanitize task dictionaries before final update
             task.parameters = convert_keys_to_str(task.parameters)
@@ -672,6 +674,17 @@ class TrainingService:
         if task.state != TrainingState.COMPLETED:
             raise ValueError(f"Training task {task_id} is not completed")
         
+        # Check if model_path is set, if not generate it from pattern
+        if not task.model_path:
+            task.model_path = f"./models/model_{task.model_type.value}_{task_id}.pth"
+            logger.info(f"Generated model_path: {task.model_path}")
+            # Update the training task in database with model_path
+            await self.db.update_training_task(task_id, task.model_dump())
+        
+        # Check if model file exists
+        if not os.path.exists(task.model_path):
+            raise ValueError(f"Model file not found at {task.model_path}")
+        
         # Use provided group_id or generate a new one
         reconciliation_group_id = group_id if group_id is not None else f"reconciliation-{task_id}-{uuid.uuid4()}"
         
@@ -761,7 +774,11 @@ class TrainingService:
             
             # Continue with the existing reconciliation logic...
             # Load saved model parameters
-            if not training_task.model_path or not os.path.exists(training_task.model_path):
+            if not training_task.model_path:
+                training_task.model_path = f"./models/model_{training_task.model_type.value}_{training_task.id}.pth"
+                logger.info(f"Generated model_path for reconciliation: {training_task.model_path}")
+                
+            if not os.path.exists(training_task.model_path):
                 raise ValueError(f"Model file not found: {training_task.model_path}")
             
             # Load model checkpoint to get dimensions
