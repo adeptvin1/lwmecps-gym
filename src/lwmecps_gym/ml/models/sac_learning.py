@@ -124,6 +124,7 @@ class SAC:
         max_replicas: int = 10
     ):
         self.device = torch.device(device)
+        self.obs_dim = obs_dim
         self.act_dim = act_dim
         self.gamma = gamma
         self.tau = tau
@@ -503,7 +504,11 @@ class SAC:
             "critic2": self.critic2.state_dict(),
             "critic1_target": self.critic1_target.state_dict(),
             "critic2_target": self.critic2_target.state_dict(),
-            "log_alpha": self.log_alpha if self.auto_entropy else None
+            "log_alpha": self.log_alpha if self.auto_entropy else None,
+            "obs_dim": self.obs_dim,
+            "act_dim": self.act_dim,
+            "deployments": self.deployments,
+            "max_replicas": self.max_replicas
         }, path)
     
     def load_model(self, path: str):
@@ -514,4 +519,13 @@ class SAC:
         self.critic1_target.load_state_dict(checkpoint["critic1_target"])
         self.critic2_target.load_state_dict(checkpoint["critic2_target"])
         if self.auto_entropy and checkpoint["log_alpha"] is not None:
-            self.log_alpha = checkpoint["log_alpha"] 
+            self.log_alpha = checkpoint["log_alpha"]
+        # Load dimensions if available (for compatibility)
+        if "obs_dim" in checkpoint:
+            self.obs_dim = checkpoint["obs_dim"]
+        if "act_dim" in checkpoint:
+            self.act_dim = checkpoint["act_dim"]
+        if "deployments" in checkpoint:
+            self.deployments = checkpoint["deployments"]
+        if "max_replicas" in checkpoint:
+            self.max_replicas = checkpoint["max_replicas"] 

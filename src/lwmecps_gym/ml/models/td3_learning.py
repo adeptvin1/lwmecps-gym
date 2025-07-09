@@ -120,6 +120,7 @@ class TD3:
         max_replicas: int = 10
     ):
         self.device = torch.device(device)
+        self.obs_dim = obs_dim
         self.act_dim = act_dim
         self.gamma = gamma
         self.tau = tau
@@ -485,7 +486,11 @@ class TD3:
             "critic2": self.critic2.state_dict(),
             "actor_target": self.actor_target.state_dict(),
             "critic1_target": self.critic1_target.state_dict(),
-            "critic2_target": self.critic2_target.state_dict()
+            "critic2_target": self.critic2_target.state_dict(),
+            "obs_dim": self.obs_dim,
+            "act_dim": self.act_dim,
+            "deployments": self.deployments,
+            "max_replicas": self.max_replicas
         }, path)
     
     def load_model(self, path: str):
@@ -495,4 +500,13 @@ class TD3:
         self.critic2.load_state_dict(checkpoint["critic2"])
         self.actor_target.load_state_dict(checkpoint["actor_target"])
         self.critic1_target.load_state_dict(checkpoint["critic1_target"])
-        self.critic2_target.load_state_dict(checkpoint["critic2_target"]) 
+        self.critic2_target.load_state_dict(checkpoint["critic2_target"])
+        # Load dimensions if available (for compatibility)
+        if "obs_dim" in checkpoint:
+            self.obs_dim = checkpoint["obs_dim"]
+        if "act_dim" in checkpoint:
+            self.act_dim = checkpoint["act_dim"]
+        if "deployments" in checkpoint:
+            self.deployments = checkpoint["deployments"]
+        if "max_replicas" in checkpoint:
+            self.max_replicas = checkpoint["max_replicas"] 

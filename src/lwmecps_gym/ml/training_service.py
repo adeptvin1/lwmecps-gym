@@ -676,14 +676,23 @@ class TrainingService:
         if not os.path.exists(model_path):
             raise ValueError(f"Model file not found at {model_path}")
 
-        # NOTE: The reconciliation currently runs on the default environment
-        # configuration because the exact training configuration (e.g. deployments)
-        # is not saved. The model is therefore tested against an environment
-        # identical to the one it was trained in, not the live one.
-
-        # We are not getting the live deployments to ensure the action space matches the trained model.
-        # reco_deployments = self._get_reco_deployments(task.group_id)
-
+        # Load model checkpoint to get correct dimensions
+        import torch
+        checkpoint = torch.load(model_path, map_location='cpu')
+        
+        # Extract dimensions from saved model
+        saved_obs_dim = checkpoint.get('obs_dim', 100)  # fallback to 100
+        saved_act_dim = checkpoint.get('act_dim', 4)    # fallback to 4
+        saved_deployments = checkpoint.get('deployments', [
+            "lwmecps-testapp-server-bs1",
+            "lwmecps-testapp-server-bs2", 
+            "lwmecps-testapp-server-bs3",
+            "lwmecps-testapp-server-bs4"
+        ])
+        saved_max_replicas = checkpoint.get('max_replicas', 10)
+        
+        logger.info(f"Loaded model dimensions: obs_dim={saved_obs_dim}, act_dim={saved_act_dim}")
+        
         # Use provided group_id or fallback to task's original group_id
         reconciliation_group_id = group_id if group_id is not None else task.group_id
         logger.info(f"Running reconciliation for task {task_id} with group_id: {reconciliation_group_id}")
@@ -729,34 +738,16 @@ class TrainingService:
             node_info=default_node_info,
             num_nodes=len(default_node_name),
             namespace=task.namespace,
-            deployments=task.parameters.get("deployments", [
-                "lwmecps-testapp-server-bs1",
-                "lwmecps-testapp-server-bs2", 
-                "lwmecps-testapp-server-bs3",
-                "lwmecps-testapp-server-bs4"
-            ]),
+            deployments=saved_deployments,  # Use deployments from saved model
             max_pods=task.max_pods,
             group_id=reconciliation_group_id,
             base_url=task.base_url,
             stabilization_time=task.stabilization_time
         )
 
-        # Calculate dimensions properly for each algorithm
-        if isinstance(env.observation_space, gym.spaces.Discrete):
-            obs_dim = env.observation_space.n
-            act_dim = 1  # Discrete action space
-        else:
-            # For Dict observation space, calculate flattened dimension
-            obs_dim = 0
-            if hasattr(env.observation_space, 'spaces') and 'nodes' in env.observation_space.spaces:
-                # Count dimensions from LWMECPSEnv3 structure
-                node_count = len(env.unwrapped.node_name) if hasattr(env.unwrapped, 'node_name') else 1
-                deployment_count = len(env.unwrapped.deployments) if hasattr(env.unwrapped, 'deployments') else 4
-                obs_dim = node_count * (4 + deployment_count * 5 + 1)  # CPU, RAM, TX, RX + deployments + latency
-            else:
-                obs_dim = env.observation_space.shape[0] if hasattr(env.observation_space, 'shape') else 100
-            
-            act_dim = env.action_space.shape[0] if hasattr(env.action_space, 'shape') else len(env.unwrapped.deployments) if hasattr(env.unwrapped, 'deployments') else 4
+        # Use dimensions from saved model instead of calculating from environment
+        obs_dim = saved_obs_dim
+        act_dim = saved_act_dim
 
         # Create agent with correct parameters
         agent = None
@@ -775,8 +766,8 @@ class TrainingService:
                 batch_size=task.parameters.get("batch_size", 64),
                 n_epochs=task.parameters.get("n_epochs", 10),
                 device=task.parameters.get("device", "cpu"),
-                deployments=getattr(env.unwrapped, 'deployments', ["mec-test-app"]),
-                max_replicas=task.parameters.get("max_replicas", 10)
+                deployments=saved_deployments,
+                max_replicas=saved_max_replicas
             )
         elif task.model_type == ModelType.SAC:
             agent = SAC(
@@ -791,8 +782,8 @@ class TrainingService:
                 target_entropy=task.parameters.get("target_entropy", -1.0),
                 batch_size=task.parameters.get("batch_size", 256),
                 device=task.parameters.get("device", "cpu"),
-                deployments=getattr(env.unwrapped, 'deployments', ["mec-test-app"]),
-                max_replicas=task.parameters.get("max_replicas", 10)
+                deployments=saved_deployments,
+                max_replicas=saved_max_replicas
             )
         elif task.model_type == ModelType.TD3:
             agent = TD3(
@@ -807,8 +798,8 @@ class TrainingService:
                 noise=task.parameters.get("noise", 0.2),
                 batch_size=task.parameters.get("batch_size", 256),
                 device=task.parameters.get("device", "cpu"),
-                deployments=getattr(env.unwrapped, 'deployments', ["mec-test-app"]),
-                max_replicas=task.parameters.get("max_replicas", 10)
+                deployments=saved_deployments,
+                max_replicas=saved_max_replicas
             )
 
         if agent is None:
