@@ -882,7 +882,13 @@ class TrainingService:
         rewards = []
 
         for step in range(sample_size):
-            action = agent.select_action(obs)
+            # Handle different agent types' select_action return values
+            if task.model_type == ModelType.PPO:
+                # PPO returns (action, log_prob, value)
+                action, log_prob, value = agent.select_action(obs)
+            else:
+                # SAC and TD3 return just action
+                action = agent.select_action(obs)
             obs, reward, terminated, truncated, info = env.step(action)
             
             # Collect metrics
