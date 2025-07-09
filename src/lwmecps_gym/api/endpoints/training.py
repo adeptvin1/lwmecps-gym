@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import List, Dict, Any, Optional
-from ...core.models import TrainingTask, TrainingResult, ReconciliationResult
+from ...core.models import TrainingTask, TrainingResult, ReconciliationResult, ReconciliationTask
 from ...core.database import Database
 from ...core.wandb_config import WandbConfig
 from ...ml.training_service import TrainingService
@@ -111,8 +111,8 @@ async def get_training_results(
     """Get training results for a task"""
     return await db.get_training_results(task_id)
 
-@router.post("/tasks/{task_id}/reconcile", response_model=ReconciliationResult)
-async def run_reconciliation(
+@router.post("/tasks/{task_id}/reconcile", response_model=ReconciliationTask)
+async def create_reconciliation_task(
     task_id: str,
     sample_size: int = Query(
         ..., 
@@ -128,9 +128,9 @@ async def run_reconciliation(
     service: TrainingService = Depends(get_training_service)
 ):
     """
-    Запуск reconciliation для обученной модели
+    Создание задачи reconciliation для обученной модели
     
-    Выполняет процесс reconciliation для проверки работы обученной модели 
+    Создает задачу reconciliation для проверки работы обученной модели 
     на новых данных или в новой среде.
     
     Args:
@@ -139,12 +139,77 @@ async def run_reconciliation(
         group_id: Опциональный ID группы экспериментов
         
     Returns:
-        Результат reconciliation с метриками производительности
+        Созданная задача reconciliation
     """
     try:
-        return await service.run_reconciliation(task_id, sample_size, group_id)
+        return await service.create_reconciliation_task(task_id, sample_size, group_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+# Reconciliation Tasks Management
+@router.get("/reconciliation-tasks", response_model=List[ReconciliationTask])
+async def list_reconciliation_tasks(
+    skip: int = 0,
+    limit: int = 10,
+    db: Database = Depends(get_db)
+):
+    """List all reconciliation tasks"""
+    return await db.list_reconciliation_tasks(skip, limit)
+
+@router.get("/reconciliation-tasks/{task_id}", response_model=ReconciliationTask)
+async def get_reconciliation_task(
+    task_id: str,
+    db: Database = Depends(get_db)
+):
+    """Get a specific reconciliation task"""
+    task = await db.get_reconciliation_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Reconciliation task not found")
+    return task
+
+@router.post("/reconciliation-tasks/{task_id}/start", response_model=ReconciliationTask)
+async def start_reconciliation_task(
+    task_id: str,
+    service: TrainingService = Depends(get_training_service)
+):
+    """Start a reconciliation task"""
+    task = await service.start_reconciliation_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Reconciliation task not found or cannot be started")
+    return task
+
+@router.post("/reconciliation-tasks/{task_id}/pause", response_model=ReconciliationTask)
+async def pause_reconciliation_task(
+    task_id: str,
+    service: TrainingService = Depends(get_training_service)
+):
+    """Pause a reconciliation task"""
+    task = await service.pause_reconciliation_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Reconciliation task not found or cannot be paused")
+    return task
+
+@router.post("/reconciliation-tasks/{task_id}/stop", response_model=ReconciliationTask)
+async def stop_reconciliation_task(
+    task_id: str,
+    service: TrainingService = Depends(get_training_service)
+):
+    """Stop a reconciliation task"""
+    task = await service.stop_reconciliation_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Reconciliation task not found or cannot be stopped")
+    return task
+
+@router.get("/reconciliation-tasks/{task_id}/progress")
+async def get_reconciliation_progress(
+    task_id: str,
+    service: TrainingService = Depends(get_training_service)
+):
+    """Get current reconciliation progress"""
+    progress = await service.get_reconciliation_progress(task_id)
+    if not progress:
+        raise HTTPException(status_code=404, detail="Reconciliation task not found")
+    return progress
 
 @router.get("/tasks/{task_id}/progress")
 async def get_training_progress(

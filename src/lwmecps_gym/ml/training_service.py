@@ -3,7 +3,7 @@ import wandb
 from datetime import datetime
 import logging
 from ..core.database import Database
-from ..core.models import TrainingTask, TrainingResult, ReconciliationResult, TrainingState, ModelType
+from ..core.models import TrainingTask, TrainingResult, ReconciliationResult, ReconciliationTask, TrainingState, ModelType
 from ..core.wandb_config import init_wandb, log_metrics, log_model, finish_wandb
 from ..core.wandb_config import WandbConfig
 import gymnasium as gym
@@ -653,6 +653,445 @@ class TrainingService:
             "wandb_run_id": task.wandb_run_id
         }
     
+    async def create_reconciliation_task(self, task_id: str, sample_size: int, group_id: Optional[str] = None) -> ReconciliationTask:
+        """
+        Create a new reconciliation task for the trained model.
+        
+        Args:
+            task_id: ID of the training task
+            sample_size: Number of steps to perform
+            group_id: Optional experiment group ID
+            
+        Returns:
+            Created ReconciliationTask instance
+        """
+        task = await self.db.get_training_task(task_id)
+        if not task:
+            raise ValueError(f"Training task {task_id} not found")
+        
+        if task.state != TrainingState.COMPLETED:
+            raise ValueError(f"Training task {task_id} is not completed")
+        
+        # Use provided group_id or generate a new one
+        reconciliation_group_id = group_id if group_id is not None else f"reconciliation-{task_id}-{uuid.uuid4()}"
+        
+        reconciliation_task = ReconciliationTask(
+            name=f"Reconciliation for {task.name}",
+            description=f"Reconciliation task for training task {task_id}",
+            training_task_id=task_id,
+            model_type=task.model_type,
+            total_steps=sample_size,
+            group_id=reconciliation_group_id,
+            namespace=task.namespace,
+            max_pods=task.max_pods,
+            base_url=task.base_url,
+            stabilization_time=task.stabilization_time,
+            model_path=task.model_path
+        )
+        
+        return await self.db.create_reconciliation_task(reconciliation_task)
+    
+    async def start_reconciliation_task(self, task_id: str) -> Optional[ReconciliationTask]:
+        """
+        Start a reconciliation task.
+        
+        Args:
+            task_id: Unique identifier of the reconciliation task
+            
+        Returns:
+            Updated ReconciliationTask instance if successful, None otherwise
+        """
+        task = await self.db.get_reconciliation_task(task_id)
+        if not task:
+            return None
+
+        task.state = TrainingState.RUNNING
+        await self.db.update_reconciliation_task(task_id, task.model_dump())
+
+        # Start reconciliation in a separate thread, passing the running event loop
+        loop = asyncio.get_running_loop()
+        thread = threading.Thread(target=self._run_reconciliation, args=(task_id, task, self, loop))
+        thread.start()
+
+        return task
+    
+    def _run_reconciliation(self, task_id: str, task: ReconciliationTask, service_instance, loop):
+        """
+        The actual reconciliation process, designed to be run in a thread.
+        
+        Args:
+            task_id: Unique identifier of the reconciliation task
+            task: The ReconciliationTask instance
+            service_instance: The instance of TrainingService to call back to
+            loop: The asyncio event loop from the main thread
+        """
+        env = None
+        db_thread = None
+        try:
+            # Create a new DB connection for this thread
+            db_thread = Database()
+
+            # Initialize wandb and update task by scheduling on the main loop
+            init_wandb(self.wandb_config, f"reconciliation_{task.name}_{task_id}")
+            task.wandb_run_id = wandb.run.id
+            
+            future = asyncio.run_coroutine_threadsafe(
+                db_thread.update_reconciliation_task(task_id, task.model_dump()), 
+                loop
+            )
+            future.result() # Wait for the update to complete
+
+            # Update the service's main task object as well
+            service_instance.reconciliation_task = task
+
+            # Convert task_id to ObjectId for MongoDB operations
+            task_id_obj = ObjectId(task_id)
+            logger.info(f"Starting reconciliation process for task {task_id}")
+            
+            # Get the original training task
+            training_task = None
+            training_task_future = asyncio.run_coroutine_threadsafe(
+                db_thread.get_training_task(str(task.training_task_id)), 
+                loop
+            )
+            training_task = training_task_future.result()
+            
+            if not training_task:
+                raise ValueError(f"Training task {task.training_task_id} not found")
+            
+            # Continue with the existing reconciliation logic...
+            # Load saved model parameters
+            if not training_task.model_path or not os.path.exists(training_task.model_path):
+                raise ValueError(f"Model file not found: {training_task.model_path}")
+            
+            # Load model checkpoint to get dimensions
+            checkpoint = torch.load(training_task.model_path, map_location="cpu")
+            saved_obs_dim = checkpoint.get('obs_dim')
+            saved_act_dim = checkpoint.get('act_dim')
+            saved_deployments = checkpoint.get('deployments', [])
+            saved_max_replicas = checkpoint.get('max_replicas', 10)
+            
+            if saved_obs_dim is None or saved_act_dim is None:
+                raise ValueError("Model checkpoint missing required dimensions")
+            
+            logger.info(f"Loaded model dimensions: obs_dim={saved_obs_dim}, act_dim={saved_act_dim}")
+            logger.info(f"Loaded deployments: {saved_deployments}")
+            logger.info(f"Loaded max_replicas: {saved_max_replicas}")
+
+            result = self._perform_reconciliation(
+                training_task, task, saved_obs_dim, saved_act_dim, 
+                saved_deployments, saved_max_replicas, training_task.model_path,
+                db_thread, loop, task_id
+            )
+            
+            # Update task state to completed
+            task.state = TrainingState.COMPLETED
+            task.progress = 100.0
+            future = asyncio.run_coroutine_threadsafe(
+                db_thread.update_reconciliation_task(task_id, task.model_dump()), 
+                loop
+            )
+            future.result()
+            
+        except Exception as e:
+            logger.error(f"Error in reconciliation thread: {str(e)}")
+            # Update task state to failed
+            task.state = TrainingState.FAILED
+            task.error_message = str(e)
+            task.progress = 0.0
+            future = asyncio.run_coroutine_threadsafe(
+                db_thread.update_reconciliation_task(task_id, task.model_dump()), 
+                loop
+            )
+            future.result()
+        finally:
+            # Clean up
+            if env:
+                env.close()
+            if db_thread:
+                asyncio.run_coroutine_threadsafe(db_thread.close(), loop)
+            finish_wandb()
+
+    def _perform_reconciliation(self, training_task: TrainingTask, reconciliation_task: ReconciliationTask, 
+                               saved_obs_dim: int, saved_act_dim: int, saved_deployments: List[str], 
+                               saved_max_replicas: int, model_path: str, db_thread, loop, task_id: str) -> ReconciliationResult:
+        """
+        Perform the actual reconciliation process.
+        """
+        # Get Kubernetes state - same approach as in training
+        logger.info("Fetching Kubernetes cluster state...")
+        state = self.minikube.k8s_state()
+        logger.info(f"Received state: {state}")
+        
+        if state is None:
+            raise Exception("Failed to get Kubernetes cluster state. No valid nodes found.")
+        
+        if not isinstance(state, dict):
+            raise Exception(f"Invalid state type: {type(state)}. Expected dict.")
+            
+        node_name = list(state.keys())
+        logger.info(f"Found nodes: {node_name}")
+        
+        if not node_name:
+            raise Exception("No nodes found in cluster state.")
+
+        # Базовые параметры
+        max_hardware = {
+            "cpu": 8,
+            "ram": 16000,
+            "tx_bandwidth": 1000,
+            "rx_bandwidth": 1000,
+            "read_disks_bandwidth": 500,
+            "write_disks_bandwidth": 500,
+            "avg_latency": 300,
+        }
+
+        pod_usage = {
+            "cpu": 2,
+            "ram": 2000,
+            "tx_bandwidth": 20,
+            "rx_bandwidth": 20,
+            "read_disks_bandwidth": 100,
+            "write_disks_bandwidth": 100,
+        }
+
+        # Создаем информацию о узлах - same approach as in training
+        node_info = {}
+        for node in node_name:
+            try:
+                logger.info(f"Processing node {node}")
+                if node not in state:
+                    logger.warning(f"Node {node} not found in state. Skipping.")
+                    continue
+                    
+                node_state = state[node]
+                logger.info(f"Node state: {node_state}")
+                
+                if not isinstance(node_state, dict):
+                    logger.warning(f"Invalid node state type for {node}: {type(node_state)}. Skipping.")
+                    continue
+                    
+                if not all(key in node_state for key in ['cpu', 'memory']):
+                    logger.warning(f"Node {node} is missing required fields. Found keys: {list(node_state.keys())}")
+                    continue
+
+                # Extract CPU value
+                cpu_value = node_state['cpu']
+                if isinstance(cpu_value, str):
+                    cpu_value = int(cpu_value)
+                
+                # Extract memory value
+                memory_value = node_state['memory']
+                if isinstance(memory_value, str):
+                    # Remove 'Ki' suffix and convert to integer
+                    memory_value = memory_value.replace('Ki', '')
+                    try:
+                        memory_value = int(memory_value)
+                    except ValueError:
+                        logger.warning(f"Could not convert memory value {memory_value} to integer. Skipping node {node}.")
+                        continue
+
+                node_info[node] = {
+                    "cpu": cpu_value,
+                    "ram": round(bitmath.KiB(memory_value).to_MB().value),
+                    "tx_bandwidth": 100,
+                    "rx_bandwidth": 100,
+                    "read_disks_bandwidth": 300,
+                    "write_disks_bandwidth": 300,
+                    "avg_latency": 10 + (10 * list(node_name).index(node)),
+                }
+                logger.info(f"Created node info for {node}: {node_info[node]}")
+            except Exception as e:
+                logger.error(f"Error processing node {node}: {str(e)}")
+                continue
+
+        if not node_info:
+            raise Exception("No valid nodes could be processed")
+
+        logger.info(f"Final node_info: {node_info}")
+        
+        # Create environment for reconciliation
+        logger.info("Creating environment")
+        env = gym.make(
+            training_task.env_config.get("env_name", "lwmecps-v3"),
+            node_name=list(node_info.keys()),
+            max_hardware=max_hardware,
+            pod_usage=pod_usage,
+            node_info=node_info,
+            num_nodes=len(node_info),
+            namespace=reconciliation_task.namespace,
+            deployments=saved_deployments,  # Use deployments from saved model
+            max_pods=reconciliation_task.max_pods,
+            group_id=reconciliation_task.group_id,
+            base_url=reconciliation_task.base_url,
+            stabilization_time=reconciliation_task.stabilization_time
+        )
+        logger.info("Environment created successfully")
+
+        # Use dimensions from saved model instead of calculating from environment
+        obs_dim = saved_obs_dim
+        act_dim = saved_act_dim
+
+        # Create agent with correct parameters
+        agent = None
+        if training_task.model_type == ModelType.PPO:
+            agent = PPO(
+                obs_dim=obs_dim,
+                act_dim=act_dim,
+                hidden_size=training_task.parameters.get("hidden_size", 256),
+                lr=training_task.parameters.get("learning_rate", 3e-4),
+                gamma=training_task.parameters.get("discount_factor", 0.99),
+                lam=training_task.parameters.get("lambda", 0.95),
+                clip_eps=training_task.parameters.get("clip_epsilon", 0.2),
+                ent_coef=training_task.parameters.get("entropy_coef", 0.01),
+                vf_coef=training_task.parameters.get("value_function_coef", 0.5),
+                n_steps=training_task.parameters.get("n_steps", 2048),
+                batch_size=training_task.parameters.get("batch_size", 64),
+                n_epochs=training_task.parameters.get("n_epochs", 10),
+                device=training_task.parameters.get("device", "cpu"),
+                deployments=saved_deployments,
+                max_replicas=saved_max_replicas
+            )
+        elif training_task.model_type == ModelType.SAC:
+            agent = SAC(
+                obs_dim=obs_dim,
+                act_dim=act_dim,
+                hidden_size=training_task.parameters.get("hidden_size", 256),
+                lr=training_task.parameters.get("learning_rate", 3e-4),
+                gamma=training_task.parameters.get("discount_factor", 0.99),
+                tau=training_task.parameters.get("tau", 0.005),
+                alpha=training_task.parameters.get("alpha", 0.2),
+                auto_entropy=training_task.parameters.get("auto_entropy", True),
+                target_entropy=training_task.parameters.get("target_entropy", -1.0),
+                batch_size=training_task.parameters.get("batch_size", 256),
+                device=training_task.parameters.get("device", "cpu"),
+                deployments=saved_deployments,
+                max_replicas=saved_max_replicas
+            )
+        elif training_task.model_type == ModelType.TD3:
+            agent = TD3(
+                obs_dim=obs_dim,
+                act_dim=act_dim,
+                hidden_size=training_task.parameters.get("hidden_size", 256),
+                lr=training_task.parameters.get("learning_rate", 3e-4),
+                gamma=training_task.parameters.get("discount_factor", 0.99),
+                tau=training_task.parameters.get("tau", 0.005),
+                policy_delay=training_task.parameters.get("policy_delay", 2),
+                noise_clip=training_task.parameters.get("noise_clip", 0.5),
+                noise=training_task.parameters.get("noise", 0.2),
+                batch_size=training_task.parameters.get("batch_size", 256),
+                device=training_task.parameters.get("device", "cpu"),
+                deployments=saved_deployments,
+                max_replicas=saved_max_replicas
+            )
+
+        if agent is None:
+            raise ValueError(f"Unknown model type: {training_task.model_type}")
+
+        # Load trained model
+        agent.load_model(model_path)
+
+        # Run inference loop
+        obs, _ = env.reset()
+        total_reward = 0
+        latencies = []
+        throughputs = []
+        success_count = 0
+        rewards = []
+
+        for step in range(reconciliation_task.total_steps):
+            # Handle different agent types' select_action return values
+            if training_task.model_type == ModelType.PPO:
+                # PPO returns (action, log_prob, value)
+                action, log_prob, value = agent.select_action(obs)
+            else:
+                # SAC and TD3 return just action
+                action = agent.select_action(obs)
+            obs, reward, terminated, truncated, info = env.step(action)
+            
+            # Collect metrics
+            total_reward += reward
+            rewards.append(reward)
+            latencies.append(info.get("latency", 0.0))
+            throughputs.append(info.get("throughput", 0.0))
+            
+            # Count success (you can adjust this criteria)
+            if reward > 0:  # Positive reward indicates success
+                success_count += 1
+                
+            # Log step-level metrics to wandb
+            wandb.log({
+                "reconciliation/step": step,
+                "reconciliation/reward": reward,
+                "reconciliation/latency": info.get("latency", 0.0),
+                "reconciliation/throughput": info.get("throughput", 0.0),
+                "reconciliation/cumulative_reward": total_reward,
+                "reconciliation/success_rate": success_count / (step + 1)
+            })
+            
+            # Update progress in database
+            if step % 10 == 0:  # Update every 10 steps
+                progress = (step / reconciliation_task.total_steps) * 100
+                reconciliation_task.current_step = step
+                reconciliation_task.progress = progress
+                try:
+                    future = asyncio.run_coroutine_threadsafe(
+                        db_thread.update_reconciliation_task(task_id, reconciliation_task.model_dump()), 
+                        loop
+                    )
+                    future.result(timeout=5)
+                except Exception as e:
+                    logger.error(f"Failed to update reconciliation progress: {str(e)}")
+                    
+            if terminated or truncated:
+                obs, _ = env.reset()
+                
+        env.close()
+        
+        # Calculate comprehensive inference metrics
+        avg_reward = total_reward / reconciliation_task.total_steps
+        avg_latency = np.mean(latencies) if latencies else 0.0
+        avg_throughput = np.mean(throughputs) if throughputs else 0.0
+        success_rate = success_count / reconciliation_task.total_steps
+        latency_std = np.std(latencies) if latencies else 0.0
+        reward_std = np.std(rewards) if rewards else 0.0
+        
+        # Calculate adaptation score (how well model performs compared to random baseline)
+        # Assuming random baseline would get negative rewards
+        adaptation_score = max(0.0, (avg_reward + 100) / 100)  # Normalize to [0, 1+]
+        
+        metrics = {
+            "avg_reward": float(avg_reward),
+            "avg_latency": float(avg_latency),
+            "avg_throughput": float(avg_throughput),
+            "success_rate": float(success_rate),
+            "latency_std": float(latency_std),
+            "reward_std": float(reward_std),
+            "adaptation_score": float(adaptation_score)
+        }
+
+        # Log final metrics to wandb
+        wandb.log({
+            "reconciliation/final_avg_reward": avg_reward,
+            "reconciliation/final_avg_latency": avg_latency,
+            "reconciliation/final_avg_throughput": avg_throughput,
+            "reconciliation/final_success_rate": success_rate,
+            "reconciliation/final_latency_stability": latency_std,
+            "reconciliation/final_adaptation_score": adaptation_score,
+            "reconciliation/total_steps": reconciliation_task.total_steps
+        })
+        
+        result = ReconciliationResult(
+            task_id=reconciliation_task.training_task_id,
+            model_type=training_task.model_type,
+            wandb_run_id=wandb.run.id,
+            metrics=metrics,
+            sample_size=reconciliation_task.total_steps,
+            model_weights_path=model_path
+        )
+        
+        return result
+
     async def run_reconciliation(self, task_id: str, sample_size: int, group_id: Optional[str] = None) -> ReconciliationResult:
         """
         Run model reconciliation on new data.
@@ -953,6 +1392,42 @@ class TrainingService:
         
         return await self.db.save_reconciliation_result(result)
         
+    async def pause_reconciliation_task(self, task_id: str) -> Optional[ReconciliationTask]:
+        """Pause a reconciliation task."""
+        task = await self.db.get_reconciliation_task(task_id)
+        if not task or task.state != TrainingState.RUNNING:
+            return None
+        
+        task.state = TrainingState.PAUSED
+        return await self.db.update_reconciliation_task(task_id, task.model_dump())
+    
+    async def stop_reconciliation_task(self, task_id: str) -> Optional[ReconciliationTask]:
+        """Stop a reconciliation task."""
+        task = await self.db.get_reconciliation_task(task_id)
+        if not task:
+            return None
+        
+        task.state = TrainingState.FAILED
+        task.error_message = "Stopped by user"
+        return await self.db.update_reconciliation_task(task_id, task.model_dump())
+    
+    async def get_reconciliation_progress(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """Get current reconciliation progress."""
+        task = await self.db.get_reconciliation_task(task_id)
+        if not task:
+            return None
+        
+        return {
+            "id": task.id,
+            "state": task.state,
+            "progress": task.progress,
+            "current_step": task.current_step,
+            "total_steps": task.total_steps,
+            "error_message": task.error_message,
+            "created_at": task.created_at,
+            "updated_at": task.updated_at
+        }
+
     def _get_agent(self, task: TrainingTask, obs_dim: int, act_dim: int):
         """Helper function to get agent instance."""
         if task.model_type == ModelType.PPO:

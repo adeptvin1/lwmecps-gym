@@ -4,7 +4,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic_settings import BaseSettings
 from bson import ObjectId
 from datetime import datetime
-from .models import TrainingTask, TrainingResult, ReconciliationResult
+from .models import TrainingTask, TrainingResult, ReconciliationResult, ReconciliationTask
 from .migrations.manager import MigrationManager
 import logging
 import asyncio
@@ -125,6 +125,51 @@ class Database:
             return [ReconciliationResult(**result) for result in results]
         except Exception as e:
             print(f"Error getting reconciliation results: {e}")
+            return []
+    
+    # Reconciliation Tasks Methods
+    async def create_reconciliation_task(self, task: ReconciliationTask) -> ReconciliationTask:
+        """Create a new reconciliation task"""
+        task_dict = task.model_dump(by_alias=True, exclude={'id'})
+        result = await self.db.reconciliation_tasks.insert_one(task_dict)
+        task.id = str(result.inserted_id)
+        return task
+    
+    async def get_reconciliation_task(self, task_id: str) -> Optional[ReconciliationTask]:
+        """Get a reconciliation task by ID"""
+        try:
+            result = await self.db.reconciliation_tasks.find_one({"_id": ObjectId(task_id)})
+            if result:
+                return ReconciliationTask(**result)
+            return None
+        except Exception as e:
+            print(f"Error getting reconciliation task: {e}")
+            return None
+    
+    async def update_reconciliation_task(self, task_id: str, update_data: Dict[str, Any]) -> Optional[ReconciliationTask]:
+        """Update a reconciliation task"""
+        try:
+            update_data["updated_at"] = datetime.utcnow()
+            result = await self.db.reconciliation_tasks.find_one_and_update(
+                {"_id": ObjectId(task_id)},
+                {"$set": update_data},
+                return_document=True
+            )
+            if result:
+                return ReconciliationTask(**result)
+            return None
+        except Exception as e:
+            print(f"Error updating reconciliation task: {e}")
+            return None
+    
+    async def list_reconciliation_tasks(self, skip: int = 0, limit: int = 10) -> List[ReconciliationTask]:
+        """List reconciliation tasks with pagination"""
+        try:
+            cursor = self.db.reconciliation_tasks.find().skip(skip).limit(limit)
+            tasks = await cursor.to_list(length=limit)
+            return [ReconciliationTask(**task) for task in tasks]
+        except Exception as e:
+            print(f"Error listing reconciliation tasks: {e}")
             return []
     
     async def close(self):

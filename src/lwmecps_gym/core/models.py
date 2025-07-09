@@ -63,6 +63,38 @@ class TrainingTask(BaseModel):
         "arbitrary_types_allowed": True
     }
 
+class ReconciliationTask(BaseModel):
+    """MongoDB model for reconciliation tasks"""
+    id: Optional[PyObjectId] = Field(default=None, alias="_id")
+    name: str
+    description: Optional[str] = None
+    training_task_id: PyObjectId = Field(description="ID исходной задачи обучения")
+    model_type: ModelType = Field(description="Тип модели (ppo, sac, td3, dqn)")
+    state: TrainingState = TrainingState.PENDING
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    wandb_run_id: Optional[str] = None
+    current_step: int = 0
+    total_steps: int = Field(description="Общее количество шагов для выполнения", example=100)
+    progress: float = 0.0
+    metrics: Dict[str, List[float]] = Field(default_factory=dict)
+    error_message: Optional[str] = None
+    model_path: Optional[str] = None
+    group_id: str = Field(description="ID группы экспериментов для reconciliation")
+    namespace: str = "lwmecps-testapp"
+    max_pods: int = 50
+    base_url: str = "http://34.51.217.76:8001"
+    stabilization_time: int = 10
+
+    model_config = {
+        "allow_population_by_field_name": True,
+        "json_encoders": {
+            datetime: lambda v: v.isoformat(),
+            ObjectId: str
+        },
+        "arbitrary_types_allowed": True
+    }
+
 class TrainingResult(BaseModel):
     """MongoDB model for training results"""
     id: Optional[PyObjectId] = Field(default=None, alias="_id")

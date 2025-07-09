@@ -20,6 +20,7 @@ class InitialSchemaMigration(Migration):
         await self.db.create_collection("training_tasks")
         await self.db.create_collection("training_results")
         await self.db.create_collection("reconciliation_results")
+        await self.db.create_collection("reconciliation_tasks")
         
         # Verify collections were created
         collections = await self.db.list_collection_names()
@@ -39,9 +40,16 @@ class InitialSchemaMigration(Migration):
         await self.db.reconciliation_results.create_index("task_id")
         await self.db.reconciliation_results.create_index("timestamp")
         await self.db.reconciliation_results.create_index("model_type")
+        
+        # Create indexes for reconciliation_tasks
+        await self.db.reconciliation_tasks.create_index("training_task_id")
+        await self.db.reconciliation_tasks.create_index("state")
+        await self.db.reconciliation_tasks.create_index("created_at")
+        await self.db.reconciliation_tasks.create_index("model_type")
     
     async def down(self) -> None:
         # Drop collections
         await self.db.training_tasks.drop()
         await self.db.training_results.drop()
-        await self.db.reconciliation_results.drop() 
+        await self.db.reconciliation_results.drop()
+        await self.db.reconciliation_tasks.drop() 
