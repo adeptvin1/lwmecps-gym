@@ -691,7 +691,7 @@ class TrainingService:
         # Use the group_id and disable starting a new experiment
         # to avoid conflicts with the testapp service.
         env = gym.make(
-            task.env_config.get("env_name", "Lwmecps-v3"),
+            task.env_config.get("env_name", "lwmecps-v3"),
             namespace=task.namespace,
             # deployments=reco_deployments, # This is intentionally commented out
             start_experiment=False,
