@@ -688,16 +688,57 @@ class TrainingService:
         reconciliation_group_id = group_id if group_id is not None else task.group_id
         logger.info(f"Running reconciliation for task {task_id} with group_id: {reconciliation_group_id}")
         
-        # Use the group_id and disable starting a new experiment
-        # to avoid conflicts with the testapp service.
+        # Default parameters for reconciliation environment
+        # The environment will get current k8s state automatically
+        default_node_name = ["node1"]
+        default_max_hardware = {
+            "cpu": 8,
+            "ram": 16000,
+            "tx_bandwidth": 1000,
+            "rx_bandwidth": 1000,
+            "read_disks_bandwidth": 500,
+            "write_disks_bandwidth": 500,
+            "avg_latency": 300,
+        }
+        default_pod_usage = {
+            "cpu": 2,
+            "ram": 2000,
+            "tx_bandwidth": 20,
+            "rx_bandwidth": 20,
+            "read_disks_bandwidth": 100,
+            "write_disks_bandwidth": 100,
+        }
+        default_node_info = {
+            "node1": {
+                "cpu": 8,
+                "memory": 16000,
+                "tx_bandwidth": 1000,
+                "rx_bandwidth": 1000,
+                "read_disks_bandwidth": 500,
+                "write_disks_bandwidth": 500,
+                "avg_latency": 300,
+            }
+        }
+        
+        # Create environment for reconciliation
         env = gym.make(
             task.env_config.get("env_name", "lwmecps-v3"),
+            node_name=default_node_name,
+            max_hardware=default_max_hardware,
+            pod_usage=default_pod_usage,
+            node_info=default_node_info,
+            num_nodes=len(default_node_name),
             namespace=task.namespace,
-            # deployments=reco_deployments, # This is intentionally commented out
-            start_experiment=False,
+            deployments=task.parameters.get("deployments", [
+                "lwmecps-testapp-server-bs1",
+                "lwmecps-testapp-server-bs2", 
+                "lwmecps-testapp-server-bs3",
+                "lwmecps-testapp-server-bs4"
+            ]),
+            max_pods=task.max_pods,
             group_id=reconciliation_group_id,
-            stabilization_time=task.stabilization_time,
             base_url=task.base_url,
+            stabilization_time=task.stabilization_time
         )
 
         # Calculate dimensions properly for each algorithm
