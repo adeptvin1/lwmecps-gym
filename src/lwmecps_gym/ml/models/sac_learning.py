@@ -47,17 +47,19 @@ class MetricsCollector:
         """Reset all metrics."""
         self.metrics.clear()
 
-class Actor(nn.Module):
-    def __init__(self, obs_dim: int, act_dim: int, hidden_size: int = 256, max_replicas: int = 10):
+class DiscreteActor(nn.Module):
+    """Actor network for discrete action spaces using categorical distribution."""
+    
+    def __init__(self, obs_dim: int, act_dim: int, num_actions_per_dim: int, hidden_size: int = 256):
         super().__init__()
         self.act_dim = act_dim
-        self.max_replicas = max_replicas
+        self.num_actions_per_dim = num_actions_per_dim
         
         # Validate dimensions
         if act_dim <= 0:
             raise ValueError(f"act_dim must be positive, got {act_dim}")
-        if max_replicas <= 0:
-            raise ValueError(f"max_replicas must be positive, got {max_replicas}")
+        if num_actions_per_dim <= 0:
+            raise ValueError(f"num_actions_per_dim must be positive, got {num_actions_per_dim}")
             
         self.net = nn.Sequential(
             nn.Linear(obs_dim, hidden_size),
@@ -65,52 +67,75 @@ class Actor(nn.Module):
             nn.Linear(hidden_size, hidden_size),
             nn.ReLU()
         )
-        self.mu = nn.Linear(hidden_size, act_dim * (max_replicas + 1))
-        self.log_std = nn.Linear(hidden_size, act_dim * (max_replicas + 1))
+        
+        # Output logits for each action dimension
+        self.action_logits = nn.Linear(hidden_size, act_dim * num_actions_per_dim)
     
-    def forward(self, obs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, obs: torch.Tensor) -> torch.Tensor:
         x = self.net(obs)
-        mu = self.mu(x)
-        log_std = self.log_std(x)
-        log_std = torch.clamp(log_std, -20, 2)
-        return mu, log_std
+        logits = self.action_logits(x)
+        # Reshape to [batch_size, act_dim, num_actions_per_dim]
+        logits = logits.view(-1, self.act_dim, self.num_actions_per_dim)
+        return logits
     
     def sample(self, obs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        mu, log_std = self.forward(obs)
-        std = log_std.exp()
-        normal = torch.distributions.Normal(mu, std)
-        x_t = normal.rsample()
-        action = torch.tanh(x_t)
-        log_prob = normal.log_prob(x_t)
-        log_prob -= torch.log(1 - action.pow(2) + 1e-6)
-        log_prob = log_prob.sum(1, keepdim=True)
+        logits = self.forward(obs)
         
-        # Reshape action to [batch_size, act_dim, max_replicas + 1]
-        action = action.view(-1, self.act_dim, self.max_replicas + 1)
-        # Convert to discrete actions
-        action = torch.argmax(action, dim=-1)
+        # Create categorical distribution for each action dimension
+        # Shape: [batch_size, act_dim, num_actions_per_dim]
+        probs = F.softmax(logits, dim=-1)
         
-        return action, log_prob, mu
+        # Sample actions
+        dist = torch.distributions.Categorical(probs)
+        actions = dist.sample()  # Shape: [batch_size, act_dim]
+        
+        # Calculate log probabilities
+        log_probs = dist.log_prob(actions)  # Shape: [batch_size, act_dim]
+        log_prob_sum = log_probs.sum(dim=1, keepdim=True)  # Sum across action dimensions
+        
+        return actions, log_prob_sum, logits
 
-class Critic(nn.Module):
-    def __init__(self, obs_dim: int, act_dim: int, hidden_size: int = 256):
+class DiscreteCritic(nn.Module):
+    """Critic network for discrete action spaces using Q-values."""
+    
+    def __init__(self, obs_dim: int, act_dim: int, num_actions_per_dim: int, hidden_size: int = 256):
         super().__init__()
+        self.act_dim = act_dim
+        self.num_actions_per_dim = num_actions_per_dim
+        
+        # Network that outputs Q-values for all possible actions
         self.net = nn.Sequential(
-            nn.Linear(obs_dim + act_dim, hidden_size),
+            nn.Linear(obs_dim, hidden_size),
             nn.ReLU(),
             nn.Linear(hidden_size, hidden_size),
             nn.ReLU(),
-            nn.Linear(hidden_size, 1)
+            nn.Linear(hidden_size, act_dim * num_actions_per_dim)
         )
     
-    def forward(self, obs: torch.Tensor, act: torch.Tensor) -> torch.Tensor:
-        return self.net(torch.cat([obs, act], dim=1))
+    def forward(self, obs: torch.Tensor, actions: Optional[torch.Tensor] = None) -> torch.Tensor:
+        q_values = self.net(obs)
+        q_values = q_values.view(-1, self.act_dim, self.num_actions_per_dim)
+        
+        if actions is not None:
+            # If actions are provided, select Q-values for those actions
+            # actions shape: [batch_size, act_dim]
+            batch_size = actions.shape[0]
+            q_selected = q_values[torch.arange(batch_size).unsqueeze(1), 
+                                torch.arange(self.act_dim).unsqueeze(0), 
+                                actions]
+            return q_selected.sum(dim=1, keepdim=True)  # Sum across action dimensions
+        else:
+            # Return all Q-values
+            return q_values
 
-class SAC:
+class DiscreteSAC:
+    """SAC adapted for discrete action spaces."""
+    
     def __init__(
         self,
         obs_dim: int,
         act_dim: int,
+        num_actions_per_dim: int,
         hidden_size: int = 256,
         lr: float = 3e-4,
         gamma: float = 0.99,
@@ -126,6 +151,7 @@ class SAC:
         self.device = torch.device(device)
         self.obs_dim = obs_dim
         self.act_dim = act_dim
+        self.num_actions_per_dim = num_actions_per_dim
         self.gamma = gamma
         self.tau = tau
         self.alpha = alpha
@@ -137,11 +163,11 @@ class SAC:
         self.metrics_collector = MetricsCollector()
         
         # Initialize networks
-        self.actor = Actor(obs_dim, act_dim, hidden_size, max_replicas).to(self.device)
-        self.critic1 = Critic(obs_dim, act_dim, hidden_size).to(self.device)
-        self.critic2 = Critic(obs_dim, act_dim, hidden_size).to(self.device)
-        self.critic1_target = Critic(obs_dim, act_dim, hidden_size).to(self.device)
-        self.critic2_target = Critic(obs_dim, act_dim, hidden_size).to(self.device)
+        self.actor = DiscreteActor(obs_dim, act_dim, num_actions_per_dim, hidden_size).to(self.device)
+        self.critic1 = DiscreteCritic(obs_dim, act_dim, num_actions_per_dim, hidden_size).to(self.device)
+        self.critic2 = DiscreteCritic(obs_dim, act_dim, num_actions_per_dim, hidden_size).to(self.device)
+        self.critic1_target = DiscreteCritic(obs_dim, act_dim, num_actions_per_dim, hidden_size).to(self.device)
+        self.critic2_target = DiscreteCritic(obs_dim, act_dim, num_actions_per_dim, hidden_size).to(self.device)
         self.critic1_target.load_state_dict(self.critic1.state_dict())
         self.critic2_target.load_state_dict(self.critic2.state_dict())
         
@@ -152,8 +178,8 @@ class SAC:
         
         # Initialize entropy tuning
         if self.auto_entropy:
-            self.target_entropy = -np.prod((act_dim,)).item() * 0.5  # Increase target entropy for more exploration
-            self.log_alpha = torch.ones(1, requires_grad=True, device=self.device)  # Start with higher alpha
+            self.target_entropy = -np.prod((act_dim,)).item() * 0.5
+            self.log_alpha = torch.ones(1, requires_grad=True, device=self.device)
             self.alpha_optimizer = torch.optim.Adam([self.log_alpha], lr=lr)
         
         # Initialize replay buffer
@@ -210,22 +236,22 @@ class SAC:
         with torch.no_grad():
             obs = self._flatten_observation(obs)
             obs_tensor = torch.FloatTensor(obs).unsqueeze(0).to(self.device)
-            action, _, _ = self.actor.sample(obs_tensor)
-            action = action.cpu().numpy()[0]
+            actions, _, _ = self.actor.sample(obs_tensor)
+            actions = actions.cpu().numpy()[0]
             
             # Validate action values
-            if not np.all((action >= 0) & (action <= self.max_replicas)):
-                logger.warning(f"Invalid action values detected: {action}. Clipping to valid range [0, {self.max_replicas}]")
-                action = np.clip(action, 0, self.max_replicas)
+            if not np.all((actions >= 0) & (actions < self.num_actions_per_dim)):
+                logger.warning(f"Invalid action values detected: {actions}. Clipping to valid range [0, {self.num_actions_per_dim})")
+                actions = np.clip(actions, 0, self.num_actions_per_dim - 1)
             
-            return action
+            return actions
     
     def calculate_metrics(self, obs, action, reward, next_obs, info, actor_loss: Optional[float] = None, critic_loss: Optional[float] = None, alpha_loss: Optional[float] = None) -> Dict[str, float]:
         """Calculate all required metrics for the current step."""
         with torch.no_grad():
             obs = self._flatten_observation(obs)
             obs_tensor = torch.FloatTensor(obs).unsqueeze(0).to(self.device)
-            action_tensor = torch.FloatTensor(action).unsqueeze(0).to(self.device)
+            action_tensor = torch.LongTensor(action).unsqueeze(0).to(self.device)
             
             # Get Q-values from both critics
             q1 = self.critic1(obs_tensor, action_tensor).item()
@@ -281,7 +307,7 @@ class SAC:
         # Sample from replay buffer
         indices = np.random.choice(len(self.replay_buffer), batch_size, replace=False)
         obs_batch = torch.FloatTensor([self._flatten_observation(self.replay_buffer[i][0]) for i in indices]).to(self.device)
-        act_batch = torch.FloatTensor([self.replay_buffer[i][1] for i in indices]).to(self.device)
+        act_batch = torch.LongTensor([self.replay_buffer[i][1] for i in indices]).to(self.device)
         rew_batch = torch.FloatTensor([self.replay_buffer[i][2] for i in indices]).to(self.device)
         next_obs_batch = torch.FloatTensor([self._flatten_observation(self.replay_buffer[i][3]) for i in indices]).to(self.device)
         done_batch = torch.FloatTensor([self.replay_buffer[i][4] for i in indices]).to(self.device)
@@ -289,8 +315,8 @@ class SAC:
         # Update critics
         with torch.no_grad():
             next_actions, next_log_probs, _ = self.actor.sample(next_obs_batch)
-            target_q1 = self.critic1_target(next_obs_batch, next_actions.float())
-            target_q2 = self.critic2_target(next_obs_batch, next_actions.float())
+            target_q1 = self.critic1_target(next_obs_batch, next_actions)
+            target_q2 = self.critic2_target(next_obs_batch, next_actions)
             target_q = torch.min(target_q1, target_q2)
             target_q = rew_batch + (1 - done_batch) * self.gamma * (target_q - self.alpha * next_log_probs)
         
@@ -310,8 +336,8 @@ class SAC:
         
         # Update actor
         actions, log_probs, _ = self.actor.sample(obs_batch)
-        q1 = self.critic1(obs_batch, actions.float())
-        q2 = self.critic2(obs_batch, actions.float())
+        q1 = self.critic1(obs_batch, actions)
+        q2 = self.critic2(obs_batch, actions)
         q = torch.min(q1, q2)
         actor_loss = (self.alpha * log_probs - q).mean()
         
@@ -507,6 +533,7 @@ class SAC:
             "log_alpha": self.log_alpha if self.auto_entropy else None,
             "obs_dim": self.obs_dim,
             "act_dim": self.act_dim,
+            "num_actions_per_dim": self.num_actions_per_dim,
             "deployments": self.deployments,
             "max_replicas": self.max_replicas
         }, path)
@@ -525,7 +552,20 @@ class SAC:
             self.obs_dim = checkpoint["obs_dim"]
         if "act_dim" in checkpoint:
             self.act_dim = checkpoint["act_dim"]
+        if "num_actions_per_dim" in checkpoint:
+            self.num_actions_per_dim = checkpoint["num_actions_per_dim"]
         if "deployments" in checkpoint:
             self.deployments = checkpoint["deployments"]
         if "max_replicas" in checkpoint:
-            self.max_replicas = checkpoint["max_replicas"] 
+            self.max_replicas = checkpoint["max_replicas"]
+
+# Keep the original SAC class for backward compatibility
+class SAC(DiscreteSAC):
+    """Backward compatibility wrapper for the original SAC interface."""
+    
+    def __init__(self, obs_dim: int, act_dim: int, **kwargs):
+        # Extract max_replicas from kwargs or use default
+        max_replicas = kwargs.pop('max_replicas', 10)
+        num_actions_per_dim = max_replicas + 1
+        
+        super().__init__(obs_dim, act_dim, num_actions_per_dim, **kwargs) 
