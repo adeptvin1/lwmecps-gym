@@ -70,6 +70,7 @@ class DiscreteActor(nn.Module):
         
         # Output logits for each action dimension
         self.action_logits = nn.Linear(hidden_size, act_dim * num_actions_per_dim)
+        logger.info(f"DiscreteActor created with action_logits output size: {act_dim * num_actions_per_dim}")
     
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
         x = self.net(obs)
@@ -163,6 +164,7 @@ class DiscreteSAC:
         self.metrics_collector = MetricsCollector()
         
         # Initialize networks
+        logger.info(f"Initializing SAC networks with obs_dim={obs_dim}, act_dim={act_dim}, num_actions_per_dim={num_actions_per_dim}")
         self.actor = DiscreteActor(obs_dim, act_dim, num_actions_per_dim, hidden_size).to(self.device)
         self.critic1 = DiscreteCritic(obs_dim, act_dim, num_actions_per_dim, hidden_size).to(self.device)
         self.critic2 = DiscreteCritic(obs_dim, act_dim, num_actions_per_dim, hidden_size).to(self.device)
@@ -540,13 +542,48 @@ class DiscreteSAC:
     
     def load_model(self, path: str):
         checkpoint = torch.load(path)
-        self.actor.load_state_dict(checkpoint["actor"])
-        self.critic1.load_state_dict(checkpoint["critic1"])
-        self.critic2.load_state_dict(checkpoint["critic2"])
-        self.critic1_target.load_state_dict(checkpoint["critic1_target"])
-        self.critic2_target.load_state_dict(checkpoint["critic2_target"])
-        if self.auto_entropy and checkpoint["log_alpha"] is not None:
+        
+        # Check if dimensions match before loading
+        current_action_logits_size = self.actor.action_logits.out_features
+        saved_action_logits_size = checkpoint["actor"]["action_logits.weight"].shape[0]
+        
+        if current_action_logits_size != saved_action_logits_size:
+            logger.warning(
+                f"Model dimension mismatch detected! "
+                f"Current action_logits size: {current_action_logits_size}, "
+                f"Saved action_logits size: {saved_action_logits_size}. "
+                f"Current model: act_dim={self.act_dim}, num_actions_per_dim={self.num_actions_per_dim}. "
+                f"Skipping incompatible layers and using current model parameters."
+            )
+            # Load only compatible layers (hidden layers)
+            current_state_dict = self.actor.state_dict()
+            saved_state_dict = checkpoint["actor"]
+            
+            # Only load layers that have matching dimensions
+            compatible_layers = {}
+            for key, value in saved_state_dict.items():
+                if key in current_state_dict and current_state_dict[key].shape == value.shape:
+                    compatible_layers[key] = value
+                else:
+                    logger.info(f"Skipping incompatible layer: {key} (shape mismatch)")
+            
+            if compatible_layers:
+                self.actor.load_state_dict(compatible_layers, strict=False)
+                logger.info(f"Loaded {len(compatible_layers)} compatible layers from checkpoint")
+            else:
+                logger.warning("No compatible layers found in checkpoint")
+        else:
+            # Dimensions match, load normally
+            self.actor.load_state_dict(checkpoint["actor"])
+            self.critic1.load_state_dict(checkpoint["critic1"])
+            self.critic2.load_state_dict(checkpoint["critic2"])
+            self.critic1_target.load_state_dict(checkpoint["critic1_target"])
+            self.critic2_target.load_state_dict(checkpoint["critic2_target"])
+        
+        # Load other parameters if available
+        if self.auto_entropy and checkpoint.get("log_alpha") is not None:
             self.log_alpha = checkpoint["log_alpha"]
+        
         # Load dimensions if available (for compatibility)
         if "obs_dim" in checkpoint:
             self.obs_dim = checkpoint["obs_dim"]

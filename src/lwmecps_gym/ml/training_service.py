@@ -380,6 +380,8 @@ class TrainingService:
                     max_replicas=max_replicas
                 )
             elif task.model_type == ModelType.SAC:
+                max_replicas = task.parameters.get("max_replicas", 10)
+                logger.info(f"Creating SAC agent with obs_dim={obs_dim}, act_dim={act_dim}, max_replicas={max_replicas}")
                 agent = SAC(
                     obs_dim=obs_dim,
                     act_dim=act_dim,
@@ -398,7 +400,7 @@ class TrainingService:
                         "lwmecps-testapp-server-bs3",
                         "lwmecps-testapp-server-bs4"
                     ],
-                    max_replicas=task.parameters.get("max_replicas", 10)
+                    max_replicas=max_replicas
                 )
             else:
                 raise ValueError(f"Unsupported model type: {task.model_type}")
@@ -970,6 +972,9 @@ class TrainingService:
                 max_replicas=saved_max_replicas
             )
         elif training_task.model_type == ModelType.SAC:
+            # Use max_replicas from task parameters to ensure consistency with training
+            max_replicas = training_task.parameters.get("max_replicas", saved_max_replicas)
+            logger.info(f"Creating SAC agent with max_replicas={max_replicas} (from task parameters)")
             agent = SAC(
                 obs_dim=obs_dim,
                 act_dim=act_dim,
@@ -983,7 +988,7 @@ class TrainingService:
                 batch_size=training_task.parameters.get("batch_size", 256),
                 device=training_task.parameters.get("device", "cpu"),
                 deployments=saved_deployments,
-                max_replicas=saved_max_replicas
+                max_replicas=max_replicas
             )
         elif training_task.model_type == ModelType.TD3:
             agent = TD3(
@@ -1288,6 +1293,9 @@ class TrainingService:
                 max_replicas=saved_max_replicas
             )
         elif task.model_type == ModelType.SAC:
+            # Use max_replicas from task parameters to ensure consistency with training
+            max_replicas = task.parameters.get("max_replicas", saved_max_replicas)
+            logger.info(f"Creating SAC agent with max_replicas={max_replicas} (from task parameters)")
             agent = SAC(
                 obs_dim=obs_dim,
                 act_dim=act_dim,
@@ -1301,7 +1309,7 @@ class TrainingService:
                 batch_size=task.parameters.get("batch_size", 256),
                 device=task.parameters.get("device", "cpu"),
                 deployments=saved_deployments,
-                max_replicas=saved_max_replicas
+                max_replicas=max_replicas
             )
         elif task.model_type == ModelType.TD3:
             agent = TD3(
