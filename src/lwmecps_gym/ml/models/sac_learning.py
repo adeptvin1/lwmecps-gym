@@ -19,9 +19,10 @@ class MetricsCollector:
             "total_reward": lambda x: True,  # Can be negative
             "q_value": lambda x: True,  # Can be negative
             "log_prob": lambda x: True,  # Can be negative
-            "actor_loss": lambda x: x >= 0,
+            "actor_loss": lambda x: True,  # Can be negative in SAC
             "critic_loss": lambda x: x >= 0,
-            "alpha_loss": lambda x: True  # Can be negative
+            "alpha_loss": lambda x: True,  # Can be negative
+            "policy_entropy": lambda x: x >= 0
         }
     
     def update(self, metrics_dict: Dict[str, float]):
@@ -147,7 +148,8 @@ class DiscreteSAC:
         batch_size: int = 256,
         device: str = "cpu",
         deployments: List[str] = None,
-        max_replicas: int = 10
+        max_replicas: int = 10,
+
     ):
         self.device = torch.device(device)
         self.obs_dim = obs_dim
@@ -162,6 +164,8 @@ class DiscreteSAC:
         self.deployments = deployments or ["mec-test-app"]
         self.max_replicas = max_replicas
         self.metrics_collector = MetricsCollector()
+        
+
         
         # Initialize networks
         logger.info(f"Initializing SAC networks with obs_dim={obs_dim}, act_dim={act_dim}, num_actions_per_dim={num_actions_per_dim}")
@@ -180,7 +184,10 @@ class DiscreteSAC:
         
         # Initialize entropy tuning
         if self.auto_entropy:
-            self.target_entropy = -np.prod((act_dim,)).item() * 0.5
+            # For discrete actions, target entropy should be negative entropy of uniform policy
+            # Uniform policy has entropy = log(num_actions) for each dimension
+            uniform_entropy = np.log(num_actions_per_dim) * act_dim
+            self.target_entropy = -uniform_entropy * 0.5  # Scale down for more exploration
             self.log_alpha = torch.ones(1, requires_grad=True, device=self.device)
             self.alpha_optimizer = torch.optim.Adam([self.log_alpha], lr=lr)
         
@@ -261,8 +268,12 @@ class DiscreteSAC:
             q_value = min(q1, q2)
             
             # Get action log probability
-            _, log_prob, _ = self.actor.sample(obs_tensor)
+            _, log_prob, logits = self.actor.sample(obs_tensor)
             log_prob = log_prob.item()
+            
+            # Calculate policy entropy
+            probs = F.softmax(logits, dim=-1)
+            entropy = -torch.sum(probs * torch.log(probs + 1e-8), dim=-1).mean().item()
             
             # Calculate accuracy (1 if reward is positive, 0 otherwise)
             accuracy = 1.0 if reward > 0 else 0.0
@@ -280,6 +291,7 @@ class DiscreteSAC:
                 "total_reward": reward,
                 "q_value": q_value,
                 "log_prob": log_prob,
+                "policy_entropy": entropy,
                 "accuracy": accuracy,
                 "mse": mse,
                 "mre": mre,
@@ -320,20 +332,25 @@ class DiscreteSAC:
             target_q1 = self.critic1_target(next_obs_batch, next_actions)
             target_q2 = self.critic2_target(next_obs_batch, next_actions)
             target_q = torch.min(target_q1, target_q2)
+            # Ensure all tensors have the same shape [batch_size, 1]
             target_q = rew_batch + (1 - done_batch) * self.gamma * (target_q - self.alpha * next_log_probs)
         
         current_q1 = self.critic1(obs_batch, act_batch)
         current_q2 = self.critic2(obs_batch, act_batch)
         
+        # Both current_q and target_q should already be [batch_size, 1]
+        # No need to sum since critic already returns summed Q-values
         critic1_loss = F.mse_loss(current_q1, target_q)
         critic2_loss = F.mse_loss(current_q2, target_q)
         
         self.critic1_optimizer.zero_grad()
         critic1_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.critic1.parameters(), max_norm=1.0)
         self.critic1_optimizer.step()
         
         self.critic2_optimizer.zero_grad()
         critic2_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.critic2.parameters(), max_norm=1.0)
         self.critic2_optimizer.step()
         
         # Update actor
@@ -345,6 +362,7 @@ class DiscreteSAC:
         
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=1.0)
         self.actor_optimizer.step()
         
         # Update alpha
@@ -353,8 +371,10 @@ class DiscreteSAC:
             alpha_loss = -(self.log_alpha * (log_probs + self.target_entropy).detach()).mean()
             self.alpha_optimizer.zero_grad()
             alpha_loss.backward()
+            torch.nn.utils.clip_grad_norm_([self.log_alpha], max_norm=1.0)
             self.alpha_optimizer.step()
-            self.alpha = self.log_alpha.exp().item()
+            # Clamp alpha to reasonable bounds
+            self.alpha = torch.clamp(self.log_alpha.exp(), min=0.01, max=10.0).item()
         
         # Update target networks
         for param, target_param in zip(self.critic1.parameters(), self.critic1_target.parameters()):
@@ -487,6 +507,11 @@ class DiscreteSAC:
                         "train/critic_loss": update_metrics["critic_loss"],
                         "train/exploration_rate": self.alpha,  # SAC exploration rate
                         "train/training_stability": training_stability,
+                        
+                        # Policy metrics
+                        "policy/entropy": self.metrics_collector.get_latest_metrics().get("policy_entropy", 0.0),
+                        "policy/alpha": self.alpha,
+                        "policy/target_entropy": self.target_entropy,
                         
                         # Task-specific metrics
                         "task/avg_latency": avg_latency,
