@@ -22,10 +22,22 @@ logger = logging.getLogger(__name__)
 class MetricsCollector:
     def __init__(self):
         self.metrics = defaultdict(list)
+        self.metric_validators = {
+            "accuracy": lambda x: 0 <= x <= 1,
+            "mse": lambda x: x >= 0,
+            "mre": lambda x: x >= 0,
+            "avg_latency": lambda x: x >= 0,
+            "total_reward": lambda x: True,  # Can be negative
+            "exploration_rate": lambda x: 0 <= x <= 1
+        }
     
     def update(self, metrics_dict: Dict[str, float]):
         """Update metrics with new values."""
         for key, value in metrics_dict.items():
+            if key in self.metric_validators:
+                if not self.metric_validators[key](value):
+                    logger.warning(f"Invalid value for metric {key}: {value}")
+                    continue
             self.metrics[key].append(value)
     
     def get_average_metrics(self) -> Dict[str, float]:
@@ -97,9 +109,12 @@ class QLearningAgent:
         """Choose action using epsilon-greedy policy."""
         state_str = self._validate_state(state)
         
+        # Get action space size from environment or use default
+        action_size = getattr(self, 'action_space_size', 4)
+        
         # Initialize state in Q-table if not present
         if state_str not in self.q_table:
-            self.q_table[state_str] = {action: 0.0 for action in range(4)}  # Assuming 4 actions
+            self.q_table[state_str] = {action: 0.0 for action in range(action_size)}
             self.state_visits[state_str] = 0
         
         # Update state visit count
@@ -125,12 +140,15 @@ class QLearningAgent:
         state_str = self._validate_state(state)
         next_state_str = self._validate_state(next_state)
         
+        # Get action space size from environment or use default
+        action_size = getattr(self, 'action_space_size', 4)
+        
         # Initialize states in Q-table if not present
         if state_str not in self.q_table:
-            self.q_table[state_str] = {action: 0.0 for action in range(4)}  # Assuming 4 actions
+            self.q_table[state_str] = {action: 0.0 for action in range(action_size)}
             self.state_visits[state_str] = 0
         if next_state_str not in self.q_table:
-            self.q_table[next_state_str] = {action: 0.0 for action in range(4)}  # Assuming 4 actions
+            self.q_table[next_state_str] = {action: 0.0 for action in range(action_size)}
             self.state_visits[next_state_str] = 0
         
         # Q-learning update
@@ -180,6 +198,15 @@ class QLearningAgent:
     
     def train(self, env, num_episodes: int, wandb_run_id: str = None) -> Dict[str, List[float]]:
         """Train the agent."""
+        # Set action space size from environment
+        if hasattr(env.action_space, 'n'):
+            self.action_space_size = env.action_space.n
+        elif hasattr(env.action_space, 'shape'):
+            # For MultiDiscrete action space
+            self.action_space_size = env.action_space.shape[0]
+        else:
+            self.action_space_size = 4  # Default fallback
+            
         episode_metrics = defaultdict(list)
         
         for episode in range(num_episodes):
@@ -231,10 +258,10 @@ class QLearningAgent:
                 f"Total Reward: {total_reward:.2f}, "
                 f"Steps: {steps}, "
                 f"Exploration Rate: {self.exploration_rate:.3f}, "
-                f"Accuracy: {avg_metrics['accuracy']:.3f}, "
-                f"MSE: {avg_metrics['mse']:.3f}, "
-                f"MRE: {avg_metrics['mre']:.3f}, "
-                f"Avg Latency: {avg_metrics['avg_latency']:.2f}"
+                f"Accuracy: {avg_metrics.get('accuracy', 0):.3f}, "
+                f"MSE: {avg_metrics.get('mse', 0):.3f}, "
+                f"MRE: {avg_metrics.get('mre', 0):.3f}, "
+                f"Avg Latency: {avg_metrics.get('avg_latency', 0):.2f}"
             )
         
         return dict(episode_metrics)
@@ -245,6 +272,7 @@ if __name__ == "__main__":
     register(
         id="lwmecps-v3",
         entry_point="lwmecps_gym.envs:LWMECPSEnv3",
+        max_episode_steps=5,
     )
 
     # Инициализируем Kubernetes клиент

@@ -2,9 +2,10 @@ import json
 import os
 import random
 import re
-from collections import deque
+from collections import deque, defaultdict
 from time import time
 from typing import Dict, List, Optional
+import logging
 
 import bitmath
 import gymnasium as gym
@@ -15,6 +16,10 @@ import torch.optim as optim
 import wandb
 from gymnasium.envs.registration import register
 from lwmecps_gym.envs.kubernetes_api import k8s
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Hyperparameters
 gamma = 0.99
@@ -29,6 +34,39 @@ epsilon_end = 0.01
 epsilon_decay = 0.995
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+class MetricsCollector:
+    def __init__(self):
+        self.metrics = defaultdict(list)
+        self.metric_validators = {
+            "accuracy": lambda x: 0 <= x <= 1,
+            "mse": lambda x: x >= 0,
+            "mre": lambda x: x >= 0,
+            "avg_latency": lambda x: x >= 0,
+            "total_reward": lambda x: True,  # Can be negative
+            "loss": lambda x: x >= 0
+        }
+    
+    def update(self, metrics_dict: Dict[str, float]):
+        """Update metrics with new values."""
+        for key, value in metrics_dict.items():
+            if key in self.metric_validators:
+                if not self.metric_validators[key](value):
+                    logger.warning(f"Invalid value for metric {key}: {value}")
+                    continue
+            self.metrics[key].append(value)
+    
+    def get_average_metrics(self) -> Dict[str, float]:
+        """Calculate average values for all metrics."""
+        return {key: np.mean(values) for key, values in self.metrics.items() if values}
+    
+    def get_latest_metrics(self) -> Dict[str, float]:
+        """Get the most recent values for all metrics."""
+        return {key: values[-1] for key, values in self.metrics.items() if values}
+    
+    def reset(self):
+        """Reset all metrics."""
+        self.metrics.clear()
 
 
 # Neural Network for DQN
@@ -86,25 +124,98 @@ device = "cpu"
 
 # DQN Agent
 class DQNAgent:
-    def __init__(self, env, replay_buffer):
+    def __init__(self, env, replay_buffer=None, learning_rate=0.001, discount_factor=0.99, 
+                 epsilon=0.1, memory_size=10000, batch_size=32):
         self.env = env
-        self.replay_buffer = replay_buffer
-        self.model = DQN(env.observation_space.shape[0],
-                         env.action_space.n).to(device)
-        self.target_model = DQN(
-            env.observation_space.shape[0],
-            env.action_space.n).to(
-            device
-        )
+        self.replay_buffer = replay_buffer or ReplayBuffer(memory_size)
+        self.learning_rate = learning_rate
+        self.discount_factor = discount_factor
+        self.epsilon = epsilon
+        self.batch_size = batch_size
+        
+        # Calculate observation dimension for Dict space
+        obs_dim = self._calculate_obs_dim()
+        
+        # Calculate action dimension
+        if hasattr(env.action_space, 'n'):
+            action_dim = env.action_space.n
+        elif hasattr(env.action_space, 'shape'):
+            action_dim = env.action_space.shape[0]
+        else:
+            action_dim = 4  # Default fallback
+            
+        self.model = DQN(obs_dim, action_dim).to(device)
+        self.target_model = DQN(obs_dim, action_dim).to(device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
         self.update_target_network()
         self.metrics_collector = MetricsCollector()
+    
+    def _calculate_obs_dim(self):
+        """Calculate observation dimension from Dict space."""
+        obs_dim = 0
+        if hasattr(self.env, 'node_name') and hasattr(self.env, 'deployments'):
+            for node in self.env.node_name:
+                # Add node metrics: CPU, RAM, TX, RX
+                obs_dim += 4
+                # Add deployment metrics for each deployment
+                for deployment in self.env.deployments:
+                    obs_dim += 5  # CPU_usage, RAM_usage, TX_usage, RX_usage, Replicas
+                # Add latency
+                obs_dim += 1
+        else:
+            # Fallback: try to get from observation space
+            try:
+                if hasattr(self.env.observation_space, 'shape'):
+                    obs_dim = self.env.observation_space.shape[0]
+                else:
+                    obs_dim = 100  # Default fallback
+            except:
+                obs_dim = 100
+        return obs_dim
+    
+    def _flatten_observation(self, obs):
+        """Flatten observation into a 1D vector."""
+        if isinstance(obs, np.ndarray):
+            return obs
+            
+        # Sort nodes for stable order
+        sorted_nodes = sorted(obs["nodes"].keys())
+        
+        # Create observation vector
+        obs_vector = []
+        for node in sorted_nodes:
+            node_obs = obs["nodes"][node]
+            # Add node metrics
+            obs_vector.extend([
+                node_obs["CPU"],
+                node_obs["RAM"],
+                node_obs["TX"],
+                node_obs["RX"]
+            ])
+            
+            # Add deployment metrics
+            if hasattr(self.env, 'deployments'):
+                for deployment in self.env.deployments:
+                    dep_obs = node_obs["deployments"][deployment]
+                    obs_vector.extend([
+                        dep_obs["CPU_usage"],
+                        dep_obs["RAM_usage"],
+                        dep_obs["TX_usage"],
+                        dep_obs["RX_usage"],
+                        dep_obs["Replicas"]
+                    ])
+            
+            # Add latency
+            obs_vector.append(node_obs["avg_latency"])
+        
+        return np.array(obs_vector, dtype=np.float32)
 
     def update_target_network(self):
         self.target_model.load_state_dict(self.model.state_dict())
 
     def act(self, state, epsilon):
         if random.random() > epsilon:
+            state = self._flatten_observation(state)
             state = torch.FloatTensor(state).unsqueeze(0).to(device)
             q_values = self.model(state)
             action = torch.argmax(q_values, dim=1).item()
@@ -114,6 +225,7 @@ class DQNAgent:
 
     def calculate_metrics(self, state, action, reward, next_state, info, loss: Optional[float] = None) -> Dict[str, float]:
         """Calculate all required metrics for the current step."""
+        state = self._flatten_observation(state)
         state_tensor = torch.FloatTensor(state).unsqueeze(0).to(device)
         q_values = self.model(state_tensor)
         current_q = q_values[0][action].item()
@@ -144,14 +256,15 @@ class DQNAgent:
         return metrics
 
     def train_step(self):
-        if self.replay_buffer.size() < batch_size:
+        if self.replay_buffer.size() < self.batch_size:
             return None
 
         state, action, reward, next_state, done = \
-            self.replay_buffer.sample(batch_size)
+            self.replay_buffer.sample(self.batch_size)
 
-        state = torch.FloatTensor(state).to(device)
-        next_state = torch.FloatTensor(next_state).to(device)
+        # Flatten observations
+        state = torch.FloatTensor([self._flatten_observation(s) for s in state]).to(device)
+        next_state = torch.FloatTensor([self._flatten_observation(s) for s in next_state]).to(device)
         action = torch.LongTensor(action).to(device)
         reward = torch.FloatTensor(reward).to(device)
         done = torch.FloatTensor(done).to(device)
@@ -160,7 +273,7 @@ class DQNAgent:
         next_q_values = self.target_model(next_state)
         q_value = q_values.gather(1, action.unsqueeze(1)).squeeze(1)
         next_q_value = next_q_values.max(1)[0]
-        expected_q_value = reward + gamma * next_q_value * (1 - done)
+        expected_q_value = reward + self.discount_factor * next_q_value * (1 - done)
 
         loss = (q_value - expected_q_value.detach()).pow(2).mean()
 
@@ -171,81 +284,117 @@ class DQNAgent:
         return loss.item()
 
 
-# Training the DQN Agent
-def train_dqn(agent, num_episodes, wandb_run_id: Optional[str] = None):
-    epsilon = epsilon_start
-    episode_metrics = {}
+    def train(self, env, num_episodes: int, wandb_run_id: Optional[str] = None) -> Dict[str, List[float]]:
+        """Train the DQN agent."""
+        epsilon = epsilon_start
+        episode_metrics = defaultdict(list)
+        
+        for episode in range(num_episodes):
+            state, _ = env.reset()
+            total_reward = 0
+            steps = 0
+            self.metrics_collector.reset()
+            
+            while True:
+                action = self.act(state, epsilon)
+                next_state, reward, terminated, truncated, info = env.step(action)
+                done = terminated or truncated
+                
+                self.replay_buffer.push(state, action, reward, next_state, done)
+                loss = self.train_step()
+                
+                # Calculate and collect metrics
+                step_metrics = self.calculate_metrics(state, action, reward, next_state, info, loss)
+                self.metrics_collector.update(step_metrics)
+                
+                state = next_state
+                total_reward += reward
+                steps += 1
+                
+                if done:
+                    break
+
+            # Update exploration rate
+            epsilon = max(epsilon_end, epsilon * epsilon_decay)
+
+            if episode % target_update_freq == 0:
+                self.update_target_network()
+
+            # Get average metrics for the episode
+            avg_metrics = self.metrics_collector.get_average_metrics()
+            
+            # Store episode metrics
+            for key, value in avg_metrics.items():
+                episode_metrics[key].append(value)
+            
+            # Log to wandb if run_id is provided
+            if wandb_run_id:
+                wandb.log({
+                    "episode": episode,
+                    **avg_metrics,
+                    "total_reward": total_reward,
+                    "steps": steps,
+                    "epsilon": epsilon
+                })
+
+            logger.info(
+                f"Episode {episode + 1}/{num_episodes}, "
+                f"Total Reward: {total_reward:.2f}, "
+                f"Steps: {steps}, "
+                f"Epsilon: {epsilon:.3f}, "
+                f"Accuracy: {avg_metrics.get('accuracy', 0):.3f}, "
+                f"MSE: {avg_metrics.get('mse', 0):.3f}, "
+                f"MRE: {avg_metrics.get('mre', 0):.3f}, "
+                f"Avg Latency: {avg_metrics.get('avg_latency', 0):.2f}"
+            )
+
+        self.model.save_model()
+        self.target_model.save_model(file_name="./dqn_target_model.pth")
+        logger.info("Training completed.")
+        
+        return dict(episode_metrics)
     
-    for episode in range(num_episodes):
-        state, _ = env.reset()
-        total_reward = 0
-        agent.metrics_collector.reset()
-        
-        for step in range(max_steps_per_episode):
-            action = agent.act(state, epsilon)
-            next_state, reward, terminated, truncated, info = env.step(action)
-            done = terminated or truncated
-            
-            agent.replay_buffer.push(state, action, reward, next_state, done)
-            loss = agent.train_step()
-            
-            # Calculate and collect metrics
-            step_metrics = agent.calculate_metrics(state, action, reward, next_state, info, loss)
-            agent.metrics_collector.update(step_metrics)
-            
-            state = next_state
-            total_reward += reward
-            
-            if done:
-                break
-
-        # Update exploration rate
-        epsilon = max(epsilon_end, epsilon * epsilon_decay)
-
-        if episode % target_update_freq == 0:
-            agent.update_target_network()
-
-        # Get average metrics for the episode
-        avg_metrics = agent.metrics_collector.get_average_metrics()
-        
-        # Store episode metrics
-        for key, value in avg_metrics.items():
-            if key not in episode_metrics:
-                episode_metrics[key] = []
-            episode_metrics[key].append(value)
-        
-        # Log to wandb if run_id is provided
-        if wandb_run_id:
-            wandb.log({
-                "episode": episode,
-                **avg_metrics,
-                "total_reward": total_reward,
-                "steps": step + 1,
-                "epsilon": epsilon
-            })
-
-        print(
-            f"Episode {episode}, Total Reward: {total_reward:.2f}, "
-            f"Epsilon: {epsilon:.3f}, "
-            f"Accuracy: {avg_metrics.get('accuracy', 0):.3f}, "
-            f"MSE: {avg_metrics.get('mse', 0):.3f}, "
-            f"MRE: {avg_metrics.get('mre', 0):.3f}, "
-            f"Avg Latency: {avg_metrics.get('avg_latency', 0):.2f}"
-        )
-
-    agent.model.save_model()
-    agent.target_model.save_model(file_name="./dqn_target_model.pth")
-    print("Training end.")
+    def save_model(self, path: str):
+        """Save model parameters to a file."""
+        try:
+            torch.save({
+                'model_state_dict': self.model.state_dict(),
+                'target_model_state_dict': self.target_model.state_dict(),
+                'optimizer_state_dict': self.optimizer.state_dict(),
+                'learning_rate': self.learning_rate,
+                'discount_factor': self.discount_factor,
+                'epsilon': self.epsilon,
+                'batch_size': self.batch_size
+            }, path)
+            logger.info(f"Model saved to {path}")
+        except Exception as e:
+            logger.error(f"Error saving model: {str(e)}")
+            raise
     
-    return episode_metrics
+    def load_model(self, path: str):
+        """Load model from a file."""
+        try:
+            checkpoint = torch.load(path, map_location='cpu')
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            self.target_model.load_state_dict(checkpoint['target_model_state_dict'])
+            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            self.learning_rate = checkpoint.get('learning_rate', self.learning_rate)
+            self.discount_factor = checkpoint.get('discount_factor', self.discount_factor)
+            self.epsilon = checkpoint.get('epsilon', self.epsilon)
+            self.batch_size = checkpoint.get('batch_size', self.batch_size)
+            logger.info(f"Model loaded from {path}")
+        except Exception as e:
+            logger.error(f"Error loading model: {str(e)}")
+            raise
 
 
 # Initialize Environment and Agent
 if __name__ == "__main__":
 
     register(
-        id="lwmecps-v0",
-        entry_point="lwmecps_gym.envs:LWMECPSEnv",
+        id="lwmecps-v3",
+        entry_point="lwmecps_gym.envs:LWMECPSEnv3",
+        max_episode_steps=5,
     )
     minikube = k8s()
 
@@ -311,20 +460,20 @@ if __name__ == "__main__":
         )
 
     env = gym.make(
-        "lwmecps-v1",
-        num_nodes=len(node_name),
+        "lwmecps-v3",
         node_name=node_name,
         max_hardware=max_hardware,
         pod_usage=pod_usage,
         node_info=node_info,
-        deployment_name="mec-test-app",
+        num_nodes=len(node_name),
         namespace="default",
-        deployments=["mec-test-app"],
+        deployments=["lwmecps-testapp-server-bs1", "lwmecps-testapp-server-bs2", "lwmecps-testapp-server-bs3", "lwmecps-testapp-server-bs4"],
         max_pods=max_pods,
+        group_id="test-group-1"
     )
 
     replay_buffer = ReplayBuffer(replay_buffer_size)
     start = time()
     agent = DQNAgent(env, replay_buffer)
-    train_dqn(agent, num_episodes)
+    agent.train(env, num_episodes)
     print(f"Training time: {(time() - start)}")
