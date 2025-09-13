@@ -133,12 +133,29 @@ class QLearningAgent:
             else:
                 action = max(self.q_table[state_str].items(), key=lambda x: x[1])[0]
         
+        # Convert single action to array format for MultiDiscrete action space
+        if hasattr(self, 'env') and hasattr(self.env, 'action_space'):
+            if hasattr(self.env.action_space, 'shape') and self.env.action_space.shape[0] > 1:
+                # For MultiDiscrete action space, return array of actions
+                import numpy as np
+                actions = np.zeros(self.env.action_space.shape[0], dtype=np.int32)
+                # Use the chosen action for all deployments (simple strategy)
+                # In a more sophisticated approach, you could have separate Q-tables for each deployment
+                actions.fill(action)
+                return actions
+        
         return action
     
     def update_q_table(self, state, action, reward, next_state, done):
         """Update Q-table using Q-learning update rule."""
         state_str = self._validate_state(state)
         next_state_str = self._validate_state(next_state)
+        
+        # Handle array actions (for MultiDiscrete action space)
+        if isinstance(action, (list, tuple, np.ndarray)):
+            # For simplicity, use the first action value
+            # In a more sophisticated approach, you could have separate Q-tables for each deployment
+            action = int(action[0]) if len(action) > 0 else 0
         
         # Get action space size from environment or use default
         action_size = getattr(self, 'action_space_size', 4)
@@ -150,6 +167,9 @@ class QLearningAgent:
         if next_state_str not in self.q_table:
             self.q_table[next_state_str] = {action: 0.0 for action in range(action_size)}
             self.state_visits[next_state_str] = 0
+        
+        # Ensure action is within valid range
+        action = max(0, min(action, action_size - 1))
         
         # Q-learning update
         current_q = self.q_table[state_str][action]
@@ -173,6 +193,11 @@ class QLearningAgent:
     def calculate_metrics(self, state, action, reward, next_state, info) -> Dict[str, float]:
         """Calculate all required metrics for the current step."""
         state_str = self._validate_state(state)
+        
+        # Handle array actions (for MultiDiscrete action space)
+        if isinstance(action, (list, tuple, np.ndarray)):
+            action = int(action[0]) if len(action) > 0 else 0
+        
         current_q = self.q_table[state_str][action]
         
         # Calculate accuracy (1 if reward is positive, 0 otherwise)
@@ -198,6 +223,9 @@ class QLearningAgent:
     
     def train(self, env, num_episodes: int, wandb_run_id: str = None) -> Dict[str, List[float]]:
         """Train the agent."""
+        # Store environment reference for action conversion
+        self.env = env
+        
         # Set action space size from environment
         if hasattr(env.action_space, 'n'):
             self.action_space_size = env.action_space.n

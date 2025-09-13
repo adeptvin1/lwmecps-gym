@@ -71,11 +71,18 @@ class MetricsCollector:
 
 # Neural Network for DQN
 class DQN(nn.Module):
-    def __init__(self, input_dim, output_dim):
+    def __init__(self, input_dim, output_dim, max_replicas=10):
         super(DQN, self).__init__()
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.max_replicas = max_replicas
+        
         self.fc1 = nn.Linear(input_dim, 128)
         self.fc2 = nn.Linear(128, 64)
-        self.fc3 = nn.Linear(64, output_dim)
+        
+        # For MultiDiscrete action space, output Q-values for each possible action
+        # We'll use a single output for simplicity (same action for all deployments)
+        self.fc3 = nn.Linear(64, max_replicas + 1)  # 0 to max_replicas actions
 
     def forward(self, x):
         x = torch.relu(self.fc1(x))
@@ -136,16 +143,21 @@ class DQNAgent:
         # Calculate observation dimension for Dict space
         obs_dim = self._calculate_obs_dim()
         
-        # Calculate action dimension
+        # Calculate action dimension and max_replicas
         if hasattr(env.action_space, 'n'):
             action_dim = env.action_space.n
+            max_replicas = 10  # Default
         elif hasattr(env.action_space, 'shape'):
             action_dim = env.action_space.shape[0]
+            # For MultiDiscrete, assume max action value is 10 (0-10 replicas)
+            max_replicas = 10
         else:
             action_dim = 4  # Default fallback
+            max_replicas = 10
             
-        self.model = DQN(obs_dim, action_dim).to(device)
-        self.target_model = DQN(obs_dim, action_dim).to(device)
+        self.max_replicas = max_replicas
+        self.model = DQN(obs_dim, action_dim, max_replicas).to(device)
+        self.target_model = DQN(obs_dim, action_dim, max_replicas).to(device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
         self.update_target_network()
         self.metrics_collector = MetricsCollector()
@@ -218,7 +230,17 @@ class DQNAgent:
             state = self._flatten_observation(state)
             state = torch.FloatTensor(state).unsqueeze(0).to(device)
             q_values = self.model(state)
-            action = torch.argmax(q_values, dim=1).item()
+            
+            # Handle MultiDiscrete action space
+            if hasattr(self.env.action_space, 'shape') and self.env.action_space.shape[0] > 1:
+                # For MultiDiscrete, we need to select actions for each deployment
+                # For simplicity, use the same action for all deployments
+                single_action = torch.argmax(q_values, dim=1).item()
+                import numpy as np
+                action = np.full(self.env.action_space.shape[0], single_action, dtype=np.int32)
+            else:
+                # For discrete action space
+                action = torch.argmax(q_values, dim=1).item()
         else:
             action = self.env.action_space.sample()
         return action
@@ -228,7 +250,15 @@ class DQNAgent:
         state = self._flatten_observation(state)
         state_tensor = torch.FloatTensor(state).unsqueeze(0).to(device)
         q_values = self.model(state_tensor)
-        current_q = q_values[0][action].item()
+        
+        # Handle array actions (for MultiDiscrete action space)
+        if isinstance(action, (list, tuple, np.ndarray)):
+            # For simplicity, use the first action value for Q-value calculation
+            action_for_q = int(action[0]) if len(action) > 0 else 0
+        else:
+            action_for_q = int(action)
+        
+        current_q = q_values[0][action_for_q].item()
         
         # Calculate accuracy (1 if reward is positive, 0 otherwise)
         accuracy = 1.0 if reward > 0 else 0.0
@@ -265,7 +295,14 @@ class DQNAgent:
         # Flatten observations
         state = torch.FloatTensor([self._flatten_observation(s) for s in state]).to(device)
         next_state = torch.FloatTensor([self._flatten_observation(s) for s in next_state]).to(device)
-        action = torch.LongTensor(action).to(device)
+        
+        # Handle array actions (for MultiDiscrete action space)
+        if isinstance(action[0], (list, tuple, np.ndarray)):
+            # For simplicity, use the first action value for training
+            action = torch.LongTensor([int(a[0]) if len(a) > 0 else 0 for a in action]).to(device)
+        else:
+            action = torch.LongTensor(action).to(device)
+            
         reward = torch.FloatTensor(reward).to(device)
         done = torch.FloatTensor(done).to(device)
 
