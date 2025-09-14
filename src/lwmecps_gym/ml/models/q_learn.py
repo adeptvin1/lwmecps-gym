@@ -251,6 +251,16 @@ class QLearningAgent:
         else:
             action = int(action)
         
+        # Ensure state exists in Q-table and action is within bounds
+        action_size = getattr(self, 'action_space_size', 4)
+        if state_str not in self.q_table:
+            self.q_table[state_str] = {action: 0.0 for action in range(action_size)}
+            self.state_visits[state_str] = 0
+            logger.info(f"State added to Q-table in calculate_metrics. Total states: {len(self.q_table)}")
+        
+        # Ensure action is within valid range
+        action = max(0, min(action, action_size - 1))
+        
         current_q = self.q_table[state_str][action]
         
         # Calculate accuracy (1 if reward is positive, 0 otherwise)
