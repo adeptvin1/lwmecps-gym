@@ -149,8 +149,11 @@ class DQNAgent:
             max_replicas = 10  # Default
         elif hasattr(env.action_space, 'shape'):
             action_dim = env.action_space.shape[0]
-            # For MultiDiscrete, assume max action value is 10 (0-10 replicas)
-            max_replicas = 10
+            # For MultiDiscrete, get max action value from nvec
+            if hasattr(env.action_space, 'nvec'):
+                max_replicas = max(env.action_space.nvec) - 1  # Convert to 0-based indexing
+            else:
+                max_replicas = 10  # Default fallback
         else:
             action_dim = 4  # Default fallback
             max_replicas = 10
@@ -234,16 +237,35 @@ class DQNAgent:
             # Handle MultiDiscrete action space
             if hasattr(self.env.action_space, 'shape') and self.env.action_space.shape[0] > 1:
                 # For MultiDiscrete, we need to select actions for each deployment
-                # For simplicity, use the same action for all deployments
-                single_action = torch.argmax(q_values, dim=1).item()
-                import numpy as np
-                action = np.full(self.env.action_space.shape[0], single_action, dtype=np.int32)
+                num_deployments = self.env.action_space.shape[0]
+                max_replicas = self.env.action_space.nvec[0] - 1  # Get max replicas from action space
+                
+                actions = np.zeros(num_deployments, dtype=np.int32)
+                
+                # Choose action for each deployment
+                for i in range(num_deployments):
+                    # For simplicity, use the same Q-values for all deployments
+                    # In a more sophisticated approach, you could have separate networks for each deployment
+                    action = torch.argmax(q_values, dim=1).item()
+                    actions[i] = min(action, max_replicas)  # Ensure within bounds
+                
+                return actions
             else:
                 # For discrete action space
                 action = torch.argmax(q_values, dim=1).item()
+                return action
         else:
-            action = self.env.action_space.sample()
-        return action
+            # Random action selection
+            if hasattr(self.env.action_space, 'shape') and self.env.action_space.shape[0] > 1:
+                # For MultiDiscrete, sample random actions for each deployment
+                num_deployments = self.env.action_space.shape[0]
+                max_replicas = self.env.action_space.nvec[0] - 1
+                actions = np.zeros(num_deployments, dtype=np.int32)
+                for i in range(num_deployments):
+                    actions[i] = random.randint(0, max_replicas)
+                return actions
+            else:
+                return self.env.action_space.sample()
 
     def calculate_metrics(self, state, action, reward, next_state, info, loss: Optional[float] = None) -> Dict[str, float]:
         """Calculate all required metrics for the current step."""
@@ -253,8 +275,8 @@ class DQNAgent:
         
         # Handle array actions (for MultiDiscrete action space)
         if isinstance(action, (list, tuple, np.ndarray)):
-            # For simplicity, use the first action value for Q-value calculation
-            action_for_q = int(action[0]) if len(action) > 0 else 0
+            # For MultiDiscrete action space, use the average action value for Q-value calculation
+            action_for_q = int(np.mean(action)) if len(action) > 0 else 0
         else:
             action_for_q = int(action)
         
@@ -298,8 +320,9 @@ class DQNAgent:
         
         # Handle array actions (for MultiDiscrete action space)
         if isinstance(action[0], (list, tuple, np.ndarray)):
-            # For simplicity, use the first action value for training
-            action = torch.LongTensor([int(a[0]) if len(a) > 0 else 0 for a in action]).to(device)
+            # For MultiDiscrete action space, use the average action value for training
+            # In a more sophisticated approach, you could train separate networks for each deployment
+            action = torch.LongTensor([int(np.mean(a)) if len(a) > 0 else 0 for a in action]).to(device)
         else:
             action = torch.LongTensor(action).to(device)
             

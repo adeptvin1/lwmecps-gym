@@ -120,7 +120,31 @@ class QLearningAgent:
         # Update state visit count
         self.state_visits[state_str] += 1
         
-        # Epsilon-greedy action selection
+        # For MultiDiscrete action space, we need to choose actions for each deployment
+        if hasattr(self, 'env') and hasattr(self.env, 'action_space'):
+            if hasattr(self.env.action_space, 'shape') and self.env.action_space.shape[0] > 1:
+                # For MultiDiscrete action space, return array of actions
+                import numpy as np
+                num_deployments = self.env.action_space.shape[0]
+                max_replicas = self.env.action_space.nvec[0] - 1  # Get max replicas from action space
+                
+                actions = np.zeros(num_deployments, dtype=np.int32)
+                
+                # Choose action for each deployment
+                for i in range(num_deployments):
+                    if random.random() < self.exploration_rate:
+                        # Random action for this deployment
+                        actions[i] = random.randint(0, max_replicas)
+                    else:
+                        # Greedy action for this deployment
+                        # For simplicity, use the same Q-table for all deployments
+                        # In a more sophisticated approach, you could have separate Q-tables for each deployment
+                        action = max(self.q_table[state_str].items(), key=lambda x: x[1])[0]
+                        actions[i] = min(action, max_replicas)  # Ensure within bounds
+                
+                return actions
+        
+        # For single action space
         if random.random() < self.exploration_rate:
             if valid_actions:
                 action = random.choice(valid_actions)
@@ -133,17 +157,6 @@ class QLearningAgent:
             else:
                 action = max(self.q_table[state_str].items(), key=lambda x: x[1])[0]
         
-        # Convert single action to array format for MultiDiscrete action space
-        if hasattr(self, 'env') and hasattr(self.env, 'action_space'):
-            if hasattr(self.env.action_space, 'shape') and self.env.action_space.shape[0] > 1:
-                # For MultiDiscrete action space, return array of actions
-                import numpy as np
-                actions = np.zeros(self.env.action_space.shape[0], dtype=np.int32)
-                # Use the chosen action for all deployments (simple strategy)
-                # In a more sophisticated approach, you could have separate Q-tables for each deployment
-                actions.fill(action)
-                return actions
-        
         return action
     
     def update_q_table(self, state, action, reward, next_state, done):
@@ -153,9 +166,12 @@ class QLearningAgent:
         
         # Handle array actions (for MultiDiscrete action space)
         if isinstance(action, (list, tuple, np.ndarray)):
-            # For simplicity, use the first action value
+            # For MultiDiscrete action space, we need to update Q-values for each deployment
+            # For simplicity, we'll use the average action value
             # In a more sophisticated approach, you could have separate Q-tables for each deployment
-            action = int(action[0]) if len(action) > 0 else 0
+            action = int(np.mean(action)) if len(action) > 0 else 0
+        else:
+            action = int(action)
         
         # Get action space size from environment or use default
         action_size = getattr(self, 'action_space_size', 4)
@@ -196,7 +212,10 @@ class QLearningAgent:
         
         # Handle array actions (for MultiDiscrete action space)
         if isinstance(action, (list, tuple, np.ndarray)):
-            action = int(action[0]) if len(action) > 0 else 0
+            # For MultiDiscrete action space, use the average action value
+            action = int(np.mean(action)) if len(action) > 0 else 0
+        else:
+            action = int(action)
         
         current_q = self.q_table[state_str][action]
         
@@ -230,8 +249,11 @@ class QLearningAgent:
         if hasattr(env.action_space, 'n'):
             self.action_space_size = env.action_space.n
         elif hasattr(env.action_space, 'shape'):
-            # For MultiDiscrete action space
-            self.action_space_size = env.action_space.shape[0]
+            # For MultiDiscrete action space, use the maximum value from nvec
+            if hasattr(env.action_space, 'nvec'):
+                self.action_space_size = max(env.action_space.nvec)
+            else:
+                self.action_space_size = env.action_space.shape[0]
         else:
             self.action_space_size = 4  # Default fallback
             
