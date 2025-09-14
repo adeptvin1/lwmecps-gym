@@ -315,6 +315,14 @@ class TrainingService:
             # Initialize appropriate agent based on model type
             logger.info(f"Initializing agent of type {task.model_type}")
             if task.model_type == ModelType.Q_LEARNING:
+                logger.info("Creating Q-learning agent with parameters:")
+                logger.info(f"  - Learning rate: {task.parameters.get('learning_rate', 0.1)}")
+                logger.info(f"  - Discount factor: {task.parameters.get('discount_factor', 0.95)}")
+                logger.info(f"  - Exploration rate: {task.parameters.get('exploration_rate', 1.0)}")
+                logger.info(f"  - Exploration decay: {task.parameters.get('exploration_decay', 0.995)}")
+                logger.info(f"  - Min exploration rate: {task.parameters.get('min_exploration_rate', 0.01)}")
+                logger.info(f"  - Max states: {task.parameters.get('max_states', 10000)}")
+                
                 agent = QLearningAgent(
                     learning_rate=task.parameters.get("learning_rate", 0.1),
                     discount_factor=task.parameters.get("discount_factor", 0.95),
@@ -323,6 +331,7 @@ class TrainingService:
                     min_exploration_rate=task.parameters.get("min_exploration_rate", 0.01),
                     max_states=task.parameters.get("max_states", 10000)
                 )
+                logger.info("Q-learning agent created successfully")
             elif task.model_type == ModelType.DQN:
                 agent = DQNAgent(
                     env,
@@ -419,7 +428,22 @@ class TrainingService:
             elif task.model_type in [ModelType.TD3, ModelType.SAC]:
                 results = agent.train(env, total_episodes=task.total_episodes, wandb_run_id=task.wandb_run_id)
             else:
+                # Q-learning and DQN training
+                if task.model_type == ModelType.Q_LEARNING:
+                    logger.info(f"Starting Q-learning training for {task.total_episodes} episodes")
+                    logger.info(f"Environment action space: {env.action_space}")
+                    logger.info(f"Environment observation space: {env.observation_space}")
+                
                 results = agent.train(env, task.total_episodes, wandb_run_id=task.wandb_run_id)
+                
+                if task.model_type == ModelType.Q_LEARNING:
+                    logger.info("Q-learning training completed successfully")
+                    if results:
+                        logger.info(f"Training results keys: {list(results.keys()) if isinstance(results, dict) else 'Not a dict'}")
+                        if isinstance(results, dict) and 'accuracy' in results:
+                            logger.info(f"Final accuracy: {results['accuracy'][-1] if results['accuracy'] else 'N/A'}")
+                        if isinstance(results, dict) and 'total_reward' in results:
+                            logger.info(f"Final total reward: {results['total_reward'][-1] if results['total_reward'] else 'N/A'}")
 
             # Save results
             if task.model_type in [ModelType.PPO, ModelType.TD3, ModelType.SAC]:
@@ -441,6 +465,11 @@ class TrainingService:
                     )
                     future.result()
             else:
+                # Q-learning and DQN results processing
+                if task.model_type == ModelType.Q_LEARNING:
+                    logger.info(f"Processing Q-learning results for {task.total_episodes} episodes")
+                    logger.info(f"Q-learning results structure: {list(results.keys()) if isinstance(results, dict) else 'Not a dict'}")
+                
                 for episode in range(task.total_episodes):
                     metrics = {
                         "total_reward": results["episode_reward"][episode],
@@ -448,17 +477,27 @@ class TrainingService:
                         "epsilon": results["episode_exploration"][episode],
                         "latency": results["episode_latency"][episode]
                     }
+                    
+                    if task.model_type == ModelType.Q_LEARNING and episode % 10 == 0:  # Log every 10th episode
+                        logger.info(f"Q-learning episode {episode}: reward={metrics['total_reward']:.2f}, steps={metrics['steps']}, epsilon={metrics['epsilon']:.3f}")
+                    
                     future = asyncio.run_coroutine_threadsafe(
                         self.save_training_result(task_id, episode, metrics, db_connection=db_thread),
                         loop
                     )
                     future.result()
+                
+                if task.model_type == ModelType.Q_LEARNING:
+                    logger.info("Q-learning results processing completed")
 
             # Save model
             os.makedirs("./models", exist_ok=True)  # Ensure models directory exists
             if task.model_type == ModelType.Q_LEARNING:
                 model_path = f"./models/model_{task.model_type.value}_{task_id}.pth"
+                logger.info(f"Saving Q-learning Q-table to {model_path}")
+                logger.info(f"Q-table size before saving: {len(agent.q_table) if hasattr(agent, 'q_table') else 'Unknown'}")
                 agent.save_q_table(model_path)
+                logger.info("Q-learning Q-table saved successfully")
             else:
                 model_path = f"./models/model_{task.model_type.value}_{task_id}.pth"
                 logger.info(f"Attempting to save model to {model_path}")
@@ -517,7 +556,17 @@ class TrainingService:
                 error_msg = str(e)
             except Exception:
                 error_msg = f"Error type: {type(e).__name__}"
-            logger.error(f"Error in training process for task {task_id}: {error_msg}")
+            
+            # Special logging for Q-learning errors
+            if task.model_type == ModelType.Q_LEARNING:
+                logger.error(f"Q-learning training failed for task {task_id}: {error_msg}")
+                logger.error(f"Q-learning error type: {type(e).__name__}")
+                if hasattr(e, '__traceback__'):
+                    import traceback
+                    logger.error(f"Q-learning traceback: {traceback.format_exc()}")
+            else:
+                logger.error(f"Error in training process for task {task_id}: {error_msg}")
+            
             task.state = TrainingState.FAILED
             if db_thread:
                 future = asyncio.run_coroutine_threadsafe(

@@ -136,7 +136,7 @@ class QLearningAgent:
         if state_str not in self.q_table:
             self.q_table[state_str] = {action: 0.0 for action in range(action_size)}
             self.state_visits[state_str] = 0
-            logger.debug(f"New state added to Q-table. Total states: {len(self.q_table)}")
+            logger.info(f"New state added to Q-table. Total states: {len(self.q_table)}")
         
         # Update state visit count
         self.state_visits[state_str] += 1
@@ -152,7 +152,7 @@ class QLearningAgent:
                 actions = np.zeros(num_deployments, dtype=np.int32)
                 is_exploration = random.random() < self.exploration_rate
                 
-                logger.debug(f"MultiDiscrete action space: num_deployments={num_deployments}, max_replicas={max_replicas}, exploration={is_exploration}")
+                logger.info(f"MultiDiscrete action space: num_deployments={num_deployments}, max_replicas={max_replicas}, exploration={is_exploration}")
                 
                 # Choose action for each deployment
                 for i in range(num_deployments):
@@ -166,12 +166,12 @@ class QLearningAgent:
                         action = max(self.q_table[state_str].items(), key=lambda x: x[1])[0]
                         actions[i] = min(action, max_replicas)  # Ensure within bounds
                 
-                logger.debug(f"Chosen actions: {actions}")
+                logger.info(f"Chosen actions: {actions}")
                 return actions
         
         # For single action space
         is_exploration = random.random() < self.exploration_rate
-        logger.debug(f"Single action space: exploration={is_exploration}")
+        logger.info(f"Single action space: exploration={is_exploration}")
         
         if is_exploration:
             if valid_actions:
@@ -185,7 +185,7 @@ class QLearningAgent:
             else:
                 action = max(self.q_table[state_str].items(), key=lambda x: x[1])[0]
         
-        logger.debug(f"Chosen action: {action}")
+        logger.info(f"Chosen action: {action}")
         return action
     
     def update_q_table(self, state, action, reward, next_state, done):
@@ -199,7 +199,7 @@ class QLearningAgent:
             # For simplicity, we'll use the average action value
             # In a more sophisticated approach, you could have separate Q-tables for each deployment
             action = int(np.mean(action)) if len(action) > 0 else 0
-            logger.debug(f"Array action converted to: {action}")
+            logger.info(f"Array action converted to: {action}")
         else:
             action = int(action)
         
@@ -210,11 +210,11 @@ class QLearningAgent:
         if state_str not in self.q_table:
             self.q_table[state_str] = {action: 0.0 for action in range(action_size)}
             self.state_visits[state_str] = 0
-            logger.debug(f"New state added to Q-table during update. Total states: {len(self.q_table)}")
+            logger.info(f"New state added to Q-table during update. Total states: {len(self.q_table)}")
         if next_state_str not in self.q_table:
             self.q_table[next_state_str] = {action: 0.0 for action in range(action_size)}
             self.state_visits[next_state_str] = 0
-            logger.debug(f"New next state added to Q-table. Total states: {len(self.q_table)}")
+            logger.info(f"New next state added to Q-table. Total states: {len(self.q_table)}")
         
         # Ensure action is within valid range
         action = max(0, min(action, action_size - 1))
@@ -229,7 +229,7 @@ class QLearningAgent:
         new_q = current_q + self.learning_rate * (reward + self.discount_factor * max_next_q - current_q)
         self.q_table[state_str][action] = new_q
         
-        logger.debug(f"Q-update: state={state_str[:50]}..., action={action}, reward={reward}, current_q={current_q:.4f}, new_q={new_q:.4f}")
+        logger.info(f"Q-update: state={state_str[:50]}..., action={action}, reward={reward}, current_q={current_q:.4f}, new_q={new_q:.4f}")
         
         # Cleanup if necessary
         self._cleanup_q_table()
@@ -307,17 +307,17 @@ class QLearningAgent:
             steps = 0
             self.metrics_collector.reset()
             
-            logger.debug(f"Episode {episode + 1}: Initial state type: {type(state)}")
+            logger.info(f"Episode {episode + 1}: Initial state type: {type(state)}")
             
             while True:
                 action = self.choose_action(state)
-                logger.debug(f"Episode {episode + 1}, Step {steps + 1}: Action chosen: {action} (type: {type(action)})")
+                logger.info(f"Episode {episode + 1}, Step {steps + 1}: Action chosen: {action} (type: {type(action)})")
                 
                 next_state, reward, terminated, truncated, info = env.step(action)
                 done = terminated or truncated
                 
-                logger.debug(f"Episode {episode + 1}, Step {steps + 1}: Reward: {reward}, Done: {done}")
-                logger.debug(f"Episode {episode + 1}, Step {steps + 1}: Info: {info}")
+                logger.info(f"Episode {episode + 1}, Step {steps + 1}: Reward: {reward}, Done: {done}")
+                logger.info(f"Episode {episode + 1}, Step {steps + 1}: Info: {info}")
                 
                 # Calculate and collect metrics
                 step_metrics = self.calculate_metrics(state, action, reward, next_state, info)
