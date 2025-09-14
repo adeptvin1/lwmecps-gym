@@ -62,6 +62,30 @@ class TrainingTask(BaseModel):
         },
         "arbitrary_types_allowed": True
     }
+    
+    def model_dump(self, **kwargs):
+        """Override model_dump to handle numpy types safely."""
+        data = super().model_dump(**kwargs)
+        return self._convert_numpy_types(data)
+    
+    def _convert_numpy_types(self, obj):
+        """Recursively convert numpy types to native Python types."""
+        import numpy as np
+        
+        if isinstance(obj, dict):
+            return {key: self._convert_numpy_types(value) for key, value in obj.items()}
+        elif isinstance(obj, list):
+            return [self._convert_numpy_types(item) for item in obj]
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.bool_):
+            return bool(obj)
+        else:
+            return obj
 
 class ReconciliationTask(BaseModel):
     """MongoDB model for reconciliation tasks"""

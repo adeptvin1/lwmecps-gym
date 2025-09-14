@@ -254,7 +254,7 @@ class TrainingService:
                     }
                     logger.info(f"Created node info for {node}: {node_info[node]}")
                 except Exception as e:
-                    logger.error(f"Error processing node {node}: {str(e)}")
+                    logger.error(f"Error processing node {node}: {type(e).__name__}: {e}")
                     continue
 
             if not node_info:
@@ -309,7 +309,7 @@ class TrainingService:
                 act_dim = env.action_space.shape[0]  # Number of deployments
                 logger.info(f"Observation dimension: {obs_dim}, Action dimension: {act_dim}")
             except Exception as e:
-                logger.error(f"Failed to get environment dimensions: {str(e)}")
+                logger.error(f"Failed to get environment dimensions: {type(e).__name__}: {e}")
                 raise
 
             # Initialize appropriate agent based on model type
@@ -512,7 +512,12 @@ class TrainingService:
             future.result()
             
         except Exception as e:
-            logger.error(f"Error in training process for task {task_id}: {str(e)}")
+            # Safely convert exception to string to avoid numpy serialization issues
+            try:
+                error_msg = str(e)
+            except Exception:
+                error_msg = f"Error type: {type(e).__name__}"
+            logger.error(f"Error in training process for task {task_id}: {error_msg}")
             task.state = TrainingState.FAILED
             if db_thread:
                 future = asyncio.run_coroutine_threadsafe(
@@ -813,10 +818,10 @@ class TrainingService:
             future.result()
             
         except Exception as e:
-            logger.error(f"Error in reconciliation thread: {str(e)}")
+            logger.error(f"Error in reconciliation thread: {type(e).__name__}: {e}")
             # Update task state to failed
             task.state = TrainingState.FAILED
-            task.error_message = str(e)
+            task.error_message = f"{type(e).__name__}: {e}"
             task.progress = 0.0
             future = asyncio.run_coroutine_threadsafe(
                 db_thread.update_reconciliation_task(task_id, task.model_dump()), 
@@ -1063,7 +1068,7 @@ class TrainingService:
                     )
                     future.result(timeout=5)
                 except Exception as e:
-                    logger.error(f"Failed to update reconciliation progress: {str(e)}")
+                    logger.error(f"Failed to update reconciliation progress: {type(e).__name__}: {e}")
                     
             if terminated or truncated:
                 obs, _ = env.reset()
