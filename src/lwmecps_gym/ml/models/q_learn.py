@@ -99,8 +99,28 @@ class QLearningAgent:
     def _validate_state(self, state):
         """Validate and format state for Q-table."""
         if isinstance(state, dict):
-            # Convert dict to string representation
-            state_str = json.dumps(state, sort_keys=True)
+            # Convert dict to string representation, handling numpy types
+            def convert_numpy(obj):
+                if isinstance(obj, np.ndarray):
+                    return obj.tolist()
+                elif isinstance(obj, np.integer):
+                    return int(obj)
+                elif isinstance(obj, np.floating):
+                    return float(obj)
+                elif isinstance(obj, dict):
+                    return {key: convert_numpy(value) for key, value in obj.items()}
+                elif isinstance(obj, list):
+                    return [convert_numpy(item) for item in obj]
+                else:
+                    return obj
+            
+            try:
+                converted_state = convert_numpy(state)
+                state_str = json.dumps(converted_state, sort_keys=True)
+            except (TypeError, ValueError) as e:
+                # Fallback to string representation if JSON serialization fails
+                logger.warning(f"Failed to serialize state to JSON: {e}. Using string representation.")
+                state_str = str(state)
         else:
             state_str = str(state)
         return state_str
