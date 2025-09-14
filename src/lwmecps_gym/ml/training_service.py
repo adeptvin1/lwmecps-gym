@@ -173,7 +173,7 @@ class TrainingService:
             # Get Kubernetes state
             logger.info("Fetching Kubernetes cluster state...")
             state = self.minikube.k8s_state()
-            logger.info(f"Received state: {state}")
+            logger.info(f"Received state: {type(state)} with {len(state) if isinstance(state, dict) else 'unknown'} items")
             
             if state is None:
                 raise Exception("Failed to get Kubernetes cluster state. No valid nodes found.")
@@ -217,7 +217,7 @@ class TrainingService:
                         continue
                         
                     node_state = state[node]
-                    logger.info(f"Node state: {node_state}")
+                    logger.info(f"Node state: {type(node_state)} with keys: {list(node_state.keys()) if isinstance(node_state, dict) else 'unknown'}")
                     
                     if not isinstance(node_state, dict):
                         logger.warning(f"Invalid node state type for {node}: {type(node_state)}. Skipping.")
@@ -845,7 +845,7 @@ class TrainingService:
         # Get Kubernetes state - same approach as in training
         logger.info("Fetching Kubernetes cluster state...")
         state = self.minikube.k8s_state()
-        logger.info(f"Received state: {state}")
+        logger.info(f"Received state: {type(state)} with {len(state) if isinstance(state, dict) else 'unknown'} items")
         
         if state is None:
             raise Exception("Failed to get Kubernetes cluster state. No valid nodes found.")
@@ -1166,7 +1166,7 @@ class TrainingService:
         # Get Kubernetes state - same approach as in training
         logger.info("Fetching Kubernetes cluster state...")
         state = self.minikube.k8s_state()
-        logger.info(f"Received state: {state}")
+        logger.info(f"Received state: {type(state)} with {len(state) if isinstance(state, dict) else 'unknown'} items")
         
         if state is None:
             raise Exception("Failed to get Kubernetes cluster state. No valid nodes found.")
