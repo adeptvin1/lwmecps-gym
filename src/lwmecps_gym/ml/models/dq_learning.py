@@ -159,6 +159,21 @@ class DQNAgent:
             max_replicas = 10
             
         self.max_replicas = max_replicas
+        
+        # Validate obs_dim by testing with a sample observation
+        try:
+            # Get a sample observation to validate the dimension
+            sample_obs, _ = env.reset()
+            sample_flat = self._flatten_observation(sample_obs)
+            actual_obs_dim = len(sample_flat)
+            logger.info(f"Sample observation dimension: {actual_obs_dim}, calculated obs_dim: {obs_dim}")
+            
+            if actual_obs_dim != obs_dim:
+                logger.warning(f"Dimension mismatch! Using actual dimension {actual_obs_dim} instead of calculated {obs_dim}")
+                obs_dim = actual_obs_dim
+        except Exception as e:
+            logger.warning(f"Could not validate obs_dim with sample observation: {e}")
+        
         self.model = DQN(obs_dim, action_dim, max_replicas).to(device)
         self.target_model = DQN(obs_dim, action_dim, max_replicas).to(device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
@@ -183,9 +198,11 @@ class DQNAgent:
                 if hasattr(self.env.observation_space, 'shape'):
                     obs_dim = self.env.observation_space.shape[0]
                 else:
-                    obs_dim = 100  # Default fallback
-            except:
-                obs_dim = 100
+                    # Calculate based on typical LWMECPSEnv3 structure
+                    # Assuming 1 node and 4 deployments as default
+                    obs_dim = 4 + (4 * 5) + 1  # 4 node metrics + 4 deployments * 5 metrics + 1 latency = 25
+            except Exception as e:
+                obs_dim = 25  # Default fallback based on typical structure
         return obs_dim
     
     def _flatten_observation(self, obs):
