@@ -20,6 +20,14 @@ class ModelType(str, Enum):
     PPO = "ppo"
     TD3 = "td3"
     SAC = "sac"
+    # Meta-learning algorithms
+    META_PPO = "meta_ppo"
+    META_SAC = "meta_sac"
+    META_TD3 = "meta_td3"
+    META_DQN = "meta_dqn"
+    # Meta-learning methods
+    MAML = "maml"
+    FOMAML = "fomaml"
     # Add more model types as needed
 
 class TrainingState(str, Enum):
