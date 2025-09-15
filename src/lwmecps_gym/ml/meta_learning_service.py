@@ -456,6 +456,101 @@ class MetaLearningService:
         
         return adaptation_metrics
     
+    async def adapt_to_new_node_count(self, task_id: str, node_config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Adapt a trained meta-learning model to a new number of nodes.
+        
+        Args:
+            task_id: ID of the trained meta-learning task
+            node_config: New node configuration
+            
+        Returns:
+            Result of adaptation
+        """
+        task = await self.db.get_training_task(task_id)
+        if not task:
+            raise ValueError(f"Task {task_id} not found")
+        
+        if task.state != TrainingState.COMPLETED:
+            raise ValueError(f"Task {task_id} is not completed")
+        
+        # Load meta-learned model
+        if not task.model_path or not os.path.exists(task.model_path):
+            raise ValueError(f"Model file not found: {task.model_path}")
+        
+        # Create adaptive version of algorithm
+        adaptive_algorithm = self._create_adaptive_algorithm(task, node_config)
+        
+        # Load meta-learned parameters
+        adaptive_algorithm.load_model(task.model_path)
+        
+        # Adapt to new number of nodes
+        new_num_nodes = node_config['new_num_nodes']
+        strategy = node_config.get('strategy', 'weight_interpolation')
+        
+        adaptation_result = adaptive_algorithm.adapt_to_new_node_count(new_num_nodes, strategy)
+        
+        # Save adapted model
+        adapted_model_path = f"./models/adapted_{task.model_type.value}_{task_id}_{new_num_nodes}nodes.pth"
+        adaptive_algorithm.save_model(adapted_model_path)
+        
+        # Update task
+        task.model_path = adapted_model_path
+        task.parameters['adapted_nodes'] = new_num_nodes
+        task.parameters['adaptation_strategy'] = strategy
+        
+        await self.db.update_training_task(task_id, task.model_dump())
+        
+        return {
+            "adaptation_result": adaptation_result,
+            "new_model_path": adapted_model_path,
+            "new_num_nodes": new_num_nodes,
+            "strategy": strategy
+        }
+    
+    def _create_adaptive_algorithm(self, task: TrainingTask, node_config: Dict[str, Any]) -> Any:
+        """Create adaptive version of algorithm."""
+        # This would create the appropriate adaptive algorithm based on task type
+        # For now, return a placeholder
+        return None
+    
+    async def get_architecture_history(self, task_id: str) -> List[Dict[str, Any]]:
+        """
+        Get architecture change history for a meta-learning task.
+        
+        Args:
+            task_id: ID of the meta-learning task
+            
+        Returns:
+            Architecture change history
+        """
+        task = await self.db.get_training_task(task_id)
+        if not task:
+            raise ValueError(f"Task {task_id} not found")
+        
+        # Return architecture history from task parameters
+        return task.parameters.get('architecture_history', [])
+    
+    async def get_current_node_count(self, task_id: str) -> Dict[str, Any]:
+        """
+        Get current number of nodes for a meta-learning task.
+        
+        Args:
+            task_id: ID of the meta-learning task
+            
+        Returns:
+            Current node count information
+        """
+        task = await self.db.get_training_task(task_id)
+        if not task:
+            raise ValueError(f"Task {task_id} not found")
+        
+        return {
+            "current_nodes": task.parameters.get('adapted_nodes', 3),
+            "max_nodes": task.parameters.get('max_nodes', 20),
+            "adaptation_capable": task.model_type in self.supported_algorithms
+        }
+    
     async def get_meta_training_progress(self, task_id: str) -> Optional[Dict[str, Any]]:
         """
         Get the current progress of a meta-learning training task.
@@ -476,5 +571,7 @@ class MetaLearningService:
             "wandb_run_id": task.wandb_run_id,
             "meta_method": task.parameters.get("meta_method", "maml"),
             "num_tasks": len(task.parameters.get("tasks", [])),
-            "meta_parameters": task.parameters.get("meta_parameters", {})
+            "meta_parameters": task.parameters.get("meta_parameters", {}),
+            "current_nodes": task.parameters.get('adapted_nodes', 3),
+            "adaptation_capable": task.model_type in self.supported_algorithms
         }

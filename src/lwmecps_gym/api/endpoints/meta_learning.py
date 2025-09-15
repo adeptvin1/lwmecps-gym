@@ -328,6 +328,136 @@ async def get_meta_learning_metrics(
         logger.error(f"Error getting meta-learning metrics for task {task_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error getting meta-learning metrics: {str(e)}")
 
+@router.post("/meta-tasks/{task_id}/adapt-nodes")
+async def adapt_to_new_node_count(
+    task_id: str,
+    node_config: Dict[str, Any] = Body(..., description="New node configuration for adaptation"),
+    service: MetaLearningService = Depends(get_meta_learning_service)
+):
+    """
+    Adapt a trained meta-learning model to a new number of nodes.
+    
+    Args:
+        task_id: ID of the trained meta-learning task
+        node_config: New node configuration containing:
+            - new_num_nodes: New number of nodes
+            - strategy: Adaptation strategy ("zero_padding", "weight_interpolation", "knowledge_distillation", "attention_based")
+            - node_info: Information about new nodes
+            - adaptation_episodes: Number of episodes for adaptation (optional)
+    
+    Returns:
+        Dictionary of adaptation results
+    """
+    try:
+        adaptation_result = await service.adapt_to_new_node_count(task_id, node_config)
+        return {
+            "task_id": task_id,
+            "adaptation_result": adaptation_result,
+            "message": f"Successfully adapted to {node_config['new_num_nodes']} nodes using {node_config.get('strategy', 'weight_interpolation')}"
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error adapting to new node count for task {task_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error adapting to new node count: {str(e)}")
+
+@router.get("/meta-tasks/{task_id}/architecture-history")
+async def get_architecture_history(
+    task_id: str,
+    service: MetaLearningService = Depends(get_meta_learning_service)
+):
+    """
+    Get architecture change history for a meta-learning task.
+    
+    Args:
+        task_id: ID of the meta-learning task
+    
+    Returns:
+        Architecture change history
+    """
+    try:
+        history = await service.get_architecture_history(task_id)
+        return {
+            "task_id": task_id,
+            "architecture_history": history
+        }
+    except Exception as e:
+        logger.error(f"Error getting architecture history for task {task_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting architecture history: {str(e)}")
+
+@router.get("/meta-tasks/{task_id}/current-nodes")
+async def get_current_node_count(
+    task_id: str,
+    service: MetaLearningService = Depends(get_meta_learning_service)
+):
+    """
+    Get current number of nodes for a meta-learning task.
+    
+    Args:
+        task_id: ID of the meta-learning task
+    
+    Returns:
+        Current node count information
+    """
+    try:
+        node_info = await service.get_current_node_count(task_id)
+        return {
+            "task_id": task_id,
+            "current_nodes": node_info.get("current_nodes", 0),
+            "max_nodes": node_info.get("max_nodes", 20),
+            "adaptation_capable": node_info.get("adaptation_capable", False)
+        }
+    except Exception as e:
+        logger.error(f"Error getting current node count for task {task_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting current node count: {str(e)}")
+
+@router.get("/supported-scaling-strategies")
+async def get_supported_scaling_strategies():
+    """
+    Get list of supported node scaling strategies.
+    
+    Returns:
+        Dictionary containing supported scaling strategies
+    """
+    return {
+        "scaling_strategies": [
+            {
+                "strategy": "zero_padding",
+                "name": "Zero Padding",
+                "description": "Simple strategy that adds zero weights for new nodes. Suitable for small changes in node count.",
+                "complexity": "low",
+                "best_for": "small changes (1-2 nodes)"
+            },
+            {
+                "strategy": "weight_interpolation",
+                "name": "Weight Interpolation",
+                "description": "Interpolates weights between existing nodes to create weights for new nodes. Suitable for medium changes.",
+                "complexity": "medium",
+                "best_for": "medium changes (3-5 nodes)"
+            },
+            {
+                "strategy": "knowledge_distillation",
+                "name": "Knowledge Distillation",
+                "description": "Uses knowledge distillation to transfer information from old architecture to new. Suitable for large changes.",
+                "complexity": "high",
+                "best_for": "large changes (5+ nodes)"
+            },
+            {
+                "strategy": "attention_based",
+                "name": "Attention-Based",
+                "description": "Uses attention mechanism to adapt to new node count. Suitable for complex changes.",
+                "complexity": "high",
+                "best_for": "complex changes with varying node characteristics"
+            }
+        ],
+        "recommendations": {
+            "small_changes": "zero_padding",
+            "medium_changes": "weight_interpolation", 
+            "large_changes": "knowledge_distillation",
+            "complex_changes": "attention_based"
+        }
+    }
+
 @router.get("/supported-meta-algorithms")
 async def get_supported_meta_algorithms():
     """
@@ -342,25 +472,29 @@ async def get_supported_meta_algorithms():
                 "type": ModelType.META_PPO,
                 "name": "Meta PPO",
                 "description": "Proximal Policy Optimization with meta-learning",
-                "base_algorithm": "PPO"
+                "base_algorithm": "PPO",
+                "adaptive": True
             },
             {
                 "type": ModelType.META_SAC,
                 "name": "Meta SAC", 
                 "description": "Soft Actor-Critic with meta-learning",
-                "base_algorithm": "SAC"
+                "base_algorithm": "SAC",
+                "adaptive": True
             },
             {
                 "type": ModelType.META_TD3,
                 "name": "Meta TD3",
                 "description": "Twin Delayed Deep Deterministic Policy Gradient with meta-learning",
-                "base_algorithm": "TD3"
+                "base_algorithm": "TD3",
+                "adaptive": True
             },
             {
                 "type": ModelType.META_DQN,
                 "name": "Meta DQN",
                 "description": "Deep Q-Network with meta-learning",
-                "base_algorithm": "DQN"
+                "base_algorithm": "DQN",
+                "adaptive": True
             }
         ],
         "supported_methods": [
