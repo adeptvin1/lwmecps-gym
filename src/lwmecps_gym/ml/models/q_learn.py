@@ -275,13 +275,22 @@ class QLearningAgent:
         # Get latency from info and take absolute value
         avg_latency = abs(info.get("latency", 0))
         
+        # Get additional metrics from info to match other algorithms
+        cpu_usage = info.get("cpu_usage", 0)
+        ram_usage = info.get("ram_usage", 0)
+        network_usage = info.get("network_usage", 0)
+        
         return {
             "accuracy": accuracy,
             "mse": mse,
             "mre": mre,
             "avg_latency": avg_latency,
+            "total_reward": reward,
+            "q_value": current_q,  # Q-value for consistency with other algorithms
             "exploration_rate": self.exploration_rate,
-            "total_reward": reward
+            "cpu_usage": cpu_usage,
+            "ram_usage": ram_usage,
+            "network_usage": network_usage
         }
     
     def train(self, env, num_episodes: int, wandb_run_id: str = None) -> Dict[str, List[float]]:
@@ -351,9 +360,16 @@ class QLearningAgent:
             # Get average metrics for the episode
             avg_metrics = self.metrics_collector.get_average_metrics()
             
-            # Store episode metrics
+            # Store episode metrics with proper naming for training_service compatibility
+            episode_metrics["episode_reward"].append(total_reward)
+            episode_metrics["episode_steps"].append(steps)
+            episode_metrics["episode_exploration"].append(self.exploration_rate)
+            episode_metrics["episode_latency"].append(avg_metrics.get('avg_latency', 0))
+            
+            # Also store all other metrics for completeness
             for key, value in avg_metrics.items():
-                episode_metrics[key].append(value)
+                if key not in ["avg_latency"]:  # Already stored as episode_latency
+                    episode_metrics[key].append(value)
             
             # Log to wandb if run_id is provided
             if wandb_run_id:
