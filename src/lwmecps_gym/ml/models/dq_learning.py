@@ -441,8 +441,8 @@ class DQNAgent:
                 f"Avg Latency: {avg_metrics.get('avg_latency', 0):.2f}"
             )
 
-        self.model.save_model()
-        self.target_model.save_model(file_name="./dqn_target_model.pth")
+        # Note: Model saving is handled by the training service
+        # The individual model.save_model() calls are not needed here
         logger.info("Training completed.")
         
         return dict(episode_metrics)
