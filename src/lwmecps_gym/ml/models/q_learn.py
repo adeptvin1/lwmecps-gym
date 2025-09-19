@@ -72,6 +72,12 @@ class QLearningAgent:
         self.state_visits = {}
         self.metrics_collector = MetricsCollector()
         
+        # Store dimensions for model saving/loading compatibility
+        self.obs_dim = None
+        self.act_dim = None
+        self.max_replicas = None
+        self.deployments = []
+        
     def _cleanup_q_table(self):
         """Remove least visited states if table size exceeds max_states."""
         if len(self.q_table) > self.max_states:
@@ -312,6 +318,39 @@ class QLearningAgent:
         else:
             self.action_space_size = 4  # Default fallback
         
+        # Set dimensions for model saving/loading compatibility
+        self.act_dim = self.action_space_size
+        self.max_replicas = getattr(env.action_space, 'nvec', [10])[0] - 1 if hasattr(env.action_space, 'nvec') else 10
+        self.deployments = getattr(env, 'deployments', [])
+        
+        # Calculate obs_dim from environment
+        try:
+            sample_obs, _ = env.reset()
+            if isinstance(sample_obs, dict):
+                # For Dict observation space, calculate dimension
+                obs_vector = []
+                for node in sample_obs:
+                    node_obs = sample_obs[node]
+                    obs_vector.extend([
+                        node_obs["cpu"], node_obs["ram"], 
+                        node_obs["tx_bandwidth"], node_obs["rx_bandwidth"]
+                    ])
+                    if "deployments" in node_obs:
+                        for deployment in node_obs["deployments"]:
+                            dep_obs = node_obs["deployments"][deployment]
+                            obs_vector.extend([
+                                dep_obs["CPU_usage"], dep_obs["RAM_usage"],
+                                dep_obs["TX_usage"], dep_obs["RX_usage"],
+                                dep_obs["Replicas"]
+                            ])
+                    obs_vector.append(node_obs.get("latency", 0))
+                self.obs_dim = len(obs_vector)
+            else:
+                self.obs_dim = len(sample_obs) if hasattr(sample_obs, '__len__') else 25
+        except Exception as e:
+            logger.warning(f"Could not calculate obs_dim: {e}")
+            self.obs_dim = 25  # Default fallback
+        
         logger.info(f"Action space size: {self.action_space_size}")
         logger.info(f"Initial exploration rate: {self.exploration_rate}")
         logger.info(f"Learning rate: {self.learning_rate}")
@@ -398,6 +437,88 @@ class QLearningAgent:
         logger.info(f"Total unique states visited: {len(self.state_visits)}")
         
         return dict(episode_metrics)
+
+    def save_model(self, path: str):
+        """
+        Save Q-learning model to a file.
+        This method provides compatibility with training service.
+        
+        Args:
+            path (str): Path to save the model
+        """
+        try:
+            # Save Q-table as JSON
+            q_table_path = path.replace('.pth', '_q_table.json')
+            self.save_q_table(q_table_path)
+            
+            # Save model metadata as pickle for compatibility
+            import pickle
+            model_data = {
+                'q_table_path': q_table_path,
+                'learning_rate': self.learning_rate,
+                'discount_factor': self.discount_factor,
+                'exploration_rate': self.exploration_rate,
+                'exploration_decay': self.exploration_decay,
+                'min_exploration_rate': self.min_exploration_rate,
+                'max_states': self.max_states,
+                'obs_dim': self.obs_dim,
+                'act_dim': self.act_dim,
+                'deployments': self.deployments,
+                'max_replicas': self.max_replicas
+            }
+            
+            with open(path, 'wb') as f:
+                pickle.dump(model_data, f)
+            
+            logger.info(f"Q-learning model saved to {path}")
+        except Exception as e:
+            logger.error(f"Error saving Q-learning model: {str(e)}")
+            raise
+
+    def load_model(self, path: str):
+        """
+        Load Q-learning model from a file.
+        This method provides compatibility with training service.
+        
+        Args:
+            path (str): Path to load the model from
+        """
+        try:
+            import pickle
+            
+            # Load model metadata
+            with open(path, 'rb') as f:
+                model_data = pickle.load(f)
+            
+            # Load Q-table
+            q_table_path = model_data.get('q_table_path', path.replace('.pth', '_q_table.json'))
+            if os.path.exists(q_table_path):
+                self.load_q_table(q_table_path)
+            else:
+                logger.warning(f"Q-table file not found at {q_table_path}")
+            
+            # Load parameters
+            self.learning_rate = model_data.get('learning_rate', self.learning_rate)
+            self.discount_factor = model_data.get('discount_factor', self.discount_factor)
+            self.exploration_rate = model_data.get('exploration_rate', self.exploration_rate)
+            self.exploration_decay = model_data.get('exploration_decay', self.exploration_decay)
+            self.min_exploration_rate = model_data.get('min_exploration_rate', self.min_exploration_rate)
+            self.max_states = model_data.get('max_states', self.max_states)
+            
+            # Load dimensions if available (for compatibility)
+            if 'obs_dim' in model_data:
+                self.obs_dim = model_data['obs_dim']
+            if 'act_dim' in model_data:
+                self.act_dim = model_data['act_dim']
+            if 'deployments' in model_data:
+                self.deployments = model_data['deployments']
+            if 'max_replicas' in model_data:
+                self.max_replicas = model_data['max_replicas']
+            
+            logger.info(f"Q-learning model loaded from {path}")
+        except Exception as e:
+            logger.error(f"Error loading Q-learning model: {str(e)}")
+            raise
 
 
 if __name__ == "__main__":

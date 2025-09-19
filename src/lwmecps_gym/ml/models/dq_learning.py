@@ -96,7 +96,7 @@ class DQN(nn.Module):
 
     def load_model(self, file_name="./dqn_model.pth"):
         if os.path.exists(file_name):
-            self.load_state_dict(torch.load(file_name))
+            self.load_state_dict(torch.load(file_name, weights_only=False))
             print(f"Model loaded from {file_name}")
         else:
             print(f"No model found at {file_name}")
@@ -179,6 +179,12 @@ class DQNAgent:
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
         self.update_target_network()
         self.metrics_collector = MetricsCollector()
+        
+        # Store dimensions for model saving/loading compatibility
+        self.obs_dim = obs_dim
+        self.act_dim = action_dim
+        self.max_replicas = max_replicas
+        self.deployments = getattr(env, 'deployments', [])
     
     def _calculate_obs_dim(self):
         """Calculate observation dimension from Dict space."""
@@ -457,7 +463,11 @@ class DQNAgent:
                 'learning_rate': self.learning_rate,
                 'discount_factor': self.discount_factor,
                 'epsilon': self.epsilon,
-                'batch_size': self.batch_size
+                'batch_size': self.batch_size,
+                'obs_dim': self.obs_dim,
+                'act_dim': self.act_dim,
+                'deployments': self.deployments,
+                'max_replicas': self.max_replicas
             }, path)
             logger.info(f"Model saved to {path}")
         except Exception as e:
@@ -467,7 +477,7 @@ class DQNAgent:
     def load_model(self, path: str):
         """Load model from a file."""
         try:
-            checkpoint = torch.load(path, map_location='cpu')
+            checkpoint = torch.load(path, map_location='cpu', weights_only=False)
             self.model.load_state_dict(checkpoint['model_state_dict'])
             self.target_model.load_state_dict(checkpoint['target_model_state_dict'])
             self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -475,6 +485,17 @@ class DQNAgent:
             self.discount_factor = checkpoint.get('discount_factor', self.discount_factor)
             self.epsilon = checkpoint.get('epsilon', self.epsilon)
             self.batch_size = checkpoint.get('batch_size', self.batch_size)
+            
+            # Load dimensions if available (for compatibility)
+            if 'obs_dim' in checkpoint:
+                self.obs_dim = checkpoint['obs_dim']
+            if 'act_dim' in checkpoint:
+                self.act_dim = checkpoint['act_dim']
+            if 'deployments' in checkpoint:
+                self.deployments = checkpoint['deployments']
+            if 'max_replicas' in checkpoint:
+                self.max_replicas = checkpoint['max_replicas']
+                
             logger.info(f"Model loaded from {path}")
         except Exception as e:
             logger.error(f"Error loading model: {str(e)}")
