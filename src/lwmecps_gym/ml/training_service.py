@@ -838,11 +838,16 @@ class TrainingService:
                 raise ValueError(f"Model file not found: {training_task.model_path}")
             
             # Load model checkpoint to get dimensions
+            logger.info(f"Loading checkpoint from: {training_task.model_path}")
             checkpoint = torch.load(training_task.model_path, map_location="cpu", weights_only=False)
+            logger.info(f"Checkpoint keys: {list(checkpoint.keys())}")
+            
             saved_obs_dim = checkpoint.get('obs_dim')
             saved_act_dim = checkpoint.get('act_dim')
             saved_deployments = checkpoint.get('deployments', [])
             saved_max_replicas = checkpoint.get('max_replicas', 10)
+            
+            logger.info(f"Raw saved_deployments: {saved_deployments} (type: {type(saved_deployments)})")
             
             if saved_obs_dim is None or saved_act_dim is None:
                 raise ValueError("Model checkpoint missing required dimensions")
@@ -1219,12 +1224,7 @@ class TrainingService:
         # Extract dimensions from saved model
         saved_obs_dim = checkpoint.get('obs_dim', 100)  # fallback to 100
         saved_act_dim = checkpoint.get('act_dim', 4)    # fallback to 4
-        saved_deployments = checkpoint.get('deployments', [
-            "lwmecps-testapp-server-bs1",
-            "lwmecps-testapp-server-bs2", 
-            "lwmecps-testapp-server-bs3",
-            "lwmecps-testapp-server-bs4"
-        ])
+        saved_deployments = checkpoint.get('deployments', [])
         saved_max_replicas = checkpoint.get('max_replicas', 10)
         
         logger.info(f"Loaded model dimensions: obs_dim={saved_obs_dim}, act_dim={saved_act_dim}")
