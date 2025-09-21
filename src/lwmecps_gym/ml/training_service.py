@@ -838,7 +838,7 @@ class TrainingService:
                 raise ValueError(f"Model file not found: {training_task.model_path}")
             
             # Load model checkpoint to get dimensions
-            checkpoint = torch.load(training_task.model_path, map_location="cpu")
+            checkpoint = torch.load(training_task.model_path, map_location="cpu", weights_only=False)
             saved_obs_dim = checkpoint.get('obs_dim')
             saved_act_dim = checkpoint.get('act_dim')
             saved_deployments = checkpoint.get('deployments', [])
@@ -1060,6 +1060,24 @@ class TrainingService:
                 deployments=saved_deployments,
                 max_replicas=saved_max_replicas
             )
+        elif training_task.model_type == ModelType.Q_LEARNING:
+            agent = QLearningAgent(
+                learning_rate=training_task.parameters.get("learning_rate", 0.1),
+                discount_factor=training_task.parameters.get("discount_factor", 0.95),
+                exploration_rate=training_task.parameters.get("exploration_rate", 1.0),
+                exploration_decay=training_task.parameters.get("exploration_decay", 0.995),
+                min_exploration_rate=training_task.parameters.get("min_exploration_rate", 0.01),
+                max_states=training_task.parameters.get("max_states", 10000)
+            )
+        elif training_task.model_type == ModelType.DQN:
+            agent = DQNAgent(
+                env,
+                learning_rate=training_task.parameters.get("learning_rate", 0.001),
+                discount_factor=training_task.parameters.get("discount_factor", 0.99),
+                epsilon=training_task.parameters.get("epsilon", 0.1),
+                memory_size=training_task.parameters.get("memory_size", 10000),
+                batch_size=training_task.parameters.get("batch_size", 32)
+            )
 
         if agent is None:
             raise ValueError(f"Unknown model type: {training_task.model_type}")
@@ -1080,6 +1098,9 @@ class TrainingService:
             if training_task.model_type == ModelType.PPO:
                 # PPO returns (action, log_prob, value)
                 action, log_prob, value = agent.select_action(obs)
+            elif training_task.model_type in [ModelType.Q_LEARNING, ModelType.DQN]:
+                # Q-learning and DQN use choose_action method
+                action = agent.choose_action(obs)
             else:
                 # SAC and TD3 return just action
                 action = agent.select_action(obs)
@@ -1193,7 +1214,7 @@ class TrainingService:
 
         # Load model checkpoint to get correct dimensions
         import torch
-        checkpoint = torch.load(model_path, map_location='cpu')
+        checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
         
         # Extract dimensions from saved model
         saved_obs_dim = checkpoint.get('obs_dim', 100)  # fallback to 100
@@ -1381,6 +1402,24 @@ class TrainingService:
                 deployments=saved_deployments,
                 max_replicas=saved_max_replicas
             )
+        elif task.model_type == ModelType.Q_LEARNING:
+            agent = QLearningAgent(
+                learning_rate=task.parameters.get("learning_rate", 0.1),
+                discount_factor=task.parameters.get("discount_factor", 0.95),
+                exploration_rate=task.parameters.get("exploration_rate", 1.0),
+                exploration_decay=task.parameters.get("exploration_decay", 0.995),
+                min_exploration_rate=task.parameters.get("min_exploration_rate", 0.01),
+                max_states=task.parameters.get("max_states", 10000)
+            )
+        elif task.model_type == ModelType.DQN:
+            agent = DQNAgent(
+                env,
+                learning_rate=task.parameters.get("learning_rate", 0.001),
+                discount_factor=task.parameters.get("discount_factor", 0.99),
+                epsilon=task.parameters.get("epsilon", 0.1),
+                memory_size=task.parameters.get("memory_size", 10000),
+                batch_size=task.parameters.get("batch_size", 32)
+            )
 
         if agent is None:
             raise ValueError(f"Unknown model type: {task.model_type}")
@@ -1404,6 +1443,9 @@ class TrainingService:
             if task.model_type == ModelType.PPO:
                 # PPO returns (action, log_prob, value)
                 action, log_prob, value = agent.select_action(obs)
+            elif task.model_type in [ModelType.Q_LEARNING, ModelType.DQN]:
+                # Q-learning and DQN use choose_action method
+                action = agent.choose_action(obs)
             else:
                 # SAC and TD3 return just action
                 action = agent.select_action(obs)

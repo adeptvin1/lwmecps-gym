@@ -451,8 +451,8 @@ class QLearningAgent:
             q_table_path = path.replace('.pth', '_q_table.json')
             self.save_q_table(q_table_path)
             
-            # Save model metadata as pickle for compatibility
-            import pickle
+            # Save model metadata as torch checkpoint for compatibility with torch.load
+            import torch
             model_data = {
                 'q_table_path': q_table_path,
                 'learning_rate': self.learning_rate,
@@ -467,8 +467,7 @@ class QLearningAgent:
                 'max_replicas': self.max_replicas
             }
             
-            with open(path, 'wb') as f:
-                pickle.dump(model_data, f)
+            torch.save(model_data, path)
             
             logger.info(f"Q-learning model saved to {path}")
         except Exception as e:
@@ -484,11 +483,10 @@ class QLearningAgent:
             path (str): Path to load the model from
         """
         try:
-            import pickle
+            import torch
             
-            # Load model metadata
-            with open(path, 'rb') as f:
-                model_data = pickle.load(f)
+            # Load model metadata using torch.load
+            model_data = torch.load(path, map_location='cpu', weights_only=False)
             
             # Load Q-table
             q_table_path = model_data.get('q_table_path', path.replace('.pth', '_q_table.json'))
