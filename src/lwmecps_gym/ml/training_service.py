@@ -494,10 +494,10 @@ class TrainingService:
             os.makedirs("./models", exist_ok=True)  # Ensure models directory exists
             if task.model_type == ModelType.Q_LEARNING:
                 model_path = f"./models/model_{task.model_type.value}_{task_id}.pth"
-                logger.info(f"Saving Q-learning Q-table to {model_path}")
+                logger.info(f"Saving Q-learning model to {model_path}")
                 logger.info(f"Q-table size before saving: {len(agent.q_table) if hasattr(agent, 'q_table') else 'Unknown'}")
-                agent.save_q_table(model_path)
-                logger.info("Q-learning Q-table saved successfully")
+                agent.save_model(model_path)
+                logger.info("Q-learning model saved successfully")
             else:
                 model_path = f"./models/model_{task.model_type.value}_{task_id}.pth"
                 logger.info(f"Attempting to save model to {model_path}")
