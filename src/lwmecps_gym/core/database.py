@@ -4,7 +4,10 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic_settings import BaseSettings
 from bson import ObjectId
 from datetime import datetime
-from .models import TrainingTask, TrainingResult, ReconciliationResult, ReconciliationTask
+from .models import (
+    TrainingTask, TrainingResult, ReconciliationResult, ReconciliationTask,
+    TransferTask, TransferResult, MetaTask, MetaResult
+)
 from .migrations.manager import MigrationManager
 import logging
 import asyncio
@@ -170,6 +173,138 @@ class Database:
             return [ReconciliationTask(**task) for task in tasks]
         except Exception as e:
             print(f"Error listing reconciliation tasks: {e}")
+            return []
+    
+    # Transfer Learning Methods
+    async def create_transfer_task(self, task: TransferTask) -> TransferTask:
+        """Create a new transfer learning task"""
+        task_dict = task.model_dump(by_alias=True, exclude={'id'})
+        result = await self.db.transfer_tasks.insert_one(task_dict)
+        task.id = str(result.inserted_id)
+        return task
+    
+    async def get_transfer_task(self, task_id: str) -> Optional[TransferTask]:
+        """Get a transfer learning task by ID"""
+        try:
+            result = await self.db.transfer_tasks.find_one({"_id": ObjectId(task_id)})
+            if result:
+                return TransferTask(**result)
+            return None
+        except Exception as e:
+            print(f"Error getting transfer task: {e}")
+            return None
+    
+    async def update_transfer_task(self, task_id: str, update_data: Dict[str, Any]) -> Optional[TransferTask]:
+        """Update a transfer learning task"""
+        try:
+            update_data["updated_at"] = datetime.utcnow()
+            result = await self.db.transfer_tasks.find_one_and_update(
+                {"_id": ObjectId(task_id)},
+                {"$set": update_data},
+                return_document=True
+            )
+            if result:
+                return TransferTask(**result)
+            return None
+        except Exception as e:
+            print(f"Error updating transfer task: {e}")
+            return None
+    
+    async def list_transfer_tasks(self, skip: int = 0, limit: int = 10) -> List[TransferTask]:
+        """List transfer learning tasks with pagination"""
+        try:
+            cursor = self.db.transfer_tasks.find().skip(skip).limit(limit)
+            tasks = await cursor.to_list(length=limit)
+            return [TransferTask(**task) for task in tasks]
+        except Exception as e:
+            print(f"Error listing transfer tasks: {e}")
+            return []
+    
+    async def save_transfer_result(self, result: TransferResult) -> TransferResult:
+        """Save a transfer learning result"""
+        try:
+            result_dict = result.model_dump(by_alias=True, exclude={'id'})
+            db_result = await self.db.transfer_results.insert_one(result_dict)
+            result.id = str(db_result.inserted_id)
+            return result
+        except Exception as e:
+            print(f"Error saving transfer result: {e}")
+            raise
+    
+    async def get_transfer_results(self, task_id: str) -> List[TransferResult]:
+        """Get all transfer learning results for a task"""
+        try:
+            cursor = self.db.transfer_results.find({"task_id": ObjectId(task_id)})
+            results = await cursor.to_list(length=None)
+            return [TransferResult(**result) for result in results]
+        except Exception as e:
+            print(f"Error getting transfer results: {e}")
+            return []
+    
+    # Meta-Learning Methods
+    async def create_meta_task(self, task: MetaTask) -> MetaTask:
+        """Create a new meta-learning task"""
+        task_dict = task.model_dump(by_alias=True, exclude={'id'})
+        result = await self.db.meta_tasks.insert_one(task_dict)
+        task.id = str(result.inserted_id)
+        return task
+    
+    async def get_meta_task(self, task_id: str) -> Optional[MetaTask]:
+        """Get a meta-learning task by ID"""
+        try:
+            result = await self.db.meta_tasks.find_one({"_id": ObjectId(task_id)})
+            if result:
+                return MetaTask(**result)
+            return None
+        except Exception as e:
+            print(f"Error getting meta task: {e}")
+            return None
+    
+    async def update_meta_task(self, task_id: str, update_data: Dict[str, Any]) -> Optional[MetaTask]:
+        """Update a meta-learning task"""
+        try:
+            update_data["updated_at"] = datetime.utcnow()
+            result = await self.db.meta_tasks.find_one_and_update(
+                {"_id": ObjectId(task_id)},
+                {"$set": update_data},
+                return_document=True
+            )
+            if result:
+                return MetaTask(**result)
+            return None
+        except Exception as e:
+            print(f"Error updating meta task: {e}")
+            return None
+    
+    async def list_meta_tasks(self, skip: int = 0, limit: int = 10) -> List[MetaTask]:
+        """List meta-learning tasks with pagination"""
+        try:
+            cursor = self.db.meta_tasks.find().skip(skip).limit(limit)
+            tasks = await cursor.to_list(length=limit)
+            return [MetaTask(**task) for task in tasks]
+        except Exception as e:
+            print(f"Error listing meta tasks: {e}")
+            return []
+    
+    async def save_meta_result(self, result: MetaResult) -> MetaResult:
+        """Save a meta-learning result"""
+        try:
+            result_dict = result.model_dump(by_alias=True, exclude={'id'})
+            db_result = await self.db.meta_results.insert_one(result_dict)
+            result.id = str(db_result.inserted_id)
+            return result
+        except Exception as e:
+            print(f"Error saving meta result: {e}")
+            raise
+    
+    async def get_meta_results(self, task_id: str) -> List[MetaResult]:
+        """Get all meta-learning results for a task"""
+        try:
+            cursor = self.db.meta_results.find({"task_id": ObjectId(task_id)})
+            results = await cursor.to_list(length=None)
+            return [MetaResult(**result) for result in results]
+        except Exception as e:
+            print(f"Error getting meta results: {e}")
             return []
     
     async def close(self):

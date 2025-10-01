@@ -1,6 +1,9 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import List, Dict, Any, Optional
-from ...core.models import TrainingTask, TrainingResult, ReconciliationResult, ReconciliationTask
+from ...core.models import (
+    TrainingTask, TrainingResult, ReconciliationResult, ReconciliationTask,
+    TransferTask, TransferResult, MetaTask, MetaResult
+)
 from ...core.database import Database
 from ...core.wandb_config import WandbConfig
 from ...ml.training_service import TrainingService
@@ -260,4 +263,106 @@ async def delete_all_training_tasks(
         return {"message": "All tasks and their associated results deleted successfully"}
     except Exception as e:
         logger.error(f"Error deleting all tasks: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error deleting all tasks: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Error deleting all tasks: {str(e)}")
+
+# Transfer Learning Endpoints
+@router.post("/transfer-tasks", response_model=TransferTask)
+async def create_transfer_task(
+    task_data: Dict[str, Any],
+    service: TrainingService = Depends(get_training_service)
+):
+    """Create a new transfer learning task"""
+    try:
+        return await service.create_transfer_task(task_data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.get("/transfer-tasks", response_model=List[TransferTask])
+async def list_transfer_tasks(
+    skip: int = 0,
+    limit: int = 10,
+    db: Database = Depends(get_db)
+):
+    """List all transfer learning tasks"""
+    return await db.list_transfer_tasks(skip, limit)
+
+@router.get("/transfer-tasks/{task_id}", response_model=TransferTask)
+async def get_transfer_task(
+    task_id: str,
+    db: Database = Depends(get_db)
+):
+    """Get a specific transfer learning task"""
+    task = await db.get_transfer_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Transfer task not found")
+    return task
+
+@router.post("/transfer-tasks/{task_id}/start", response_model=TransferTask)
+async def start_transfer_training(
+    task_id: str,
+    service: TrainingService = Depends(get_training_service)
+):
+    """Start transfer learning training"""
+    task = await service.start_transfer_training(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Transfer task not found or cannot be started")
+    return task
+
+@router.get("/transfer-tasks/{task_id}/results", response_model=List[TransferResult])
+async def get_transfer_results(
+    task_id: str,
+    db: Database = Depends(get_db)
+):
+    """Get transfer learning results for a task"""
+    return await db.get_transfer_results(task_id)
+
+# Meta-Learning Endpoints
+@router.post("/meta-tasks", response_model=MetaTask)
+async def create_meta_task(
+    task_data: Dict[str, Any],
+    service: TrainingService = Depends(get_training_service)
+):
+    """Create a new meta-learning task"""
+    try:
+        return await service.create_meta_task(task_data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.get("/meta-tasks", response_model=List[MetaTask])
+async def list_meta_tasks(
+    skip: int = 0,
+    limit: int = 10,
+    db: Database = Depends(get_db)
+):
+    """List all meta-learning tasks"""
+    return await db.list_meta_tasks(skip, limit)
+
+@router.get("/meta-tasks/{task_id}", response_model=MetaTask)
+async def get_meta_task(
+    task_id: str,
+    db: Database = Depends(get_db)
+):
+    """Get a specific meta-learning task"""
+    task = await db.get_meta_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Meta task not found")
+    return task
+
+@router.post("/meta-tasks/{task_id}/start", response_model=MetaTask)
+async def start_meta_training(
+    task_id: str,
+    service: TrainingService = Depends(get_training_service)
+):
+    """Start meta-learning training"""
+    task = await service.start_meta_training(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Meta task not found or cannot be started")
+    return task
+
+@router.get("/meta-tasks/{task_id}/results", response_model=List[MetaResult])
+async def get_meta_results(
+    task_id: str,
+    db: Database = Depends(get_db)
+):
+    """Get meta-learning results for a task"""
+    return await db.get_meta_results(task_id) 

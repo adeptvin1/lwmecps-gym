@@ -3,7 +3,11 @@ import wandb
 from datetime import datetime
 import logging
 from ..core.database import Database
-from ..core.models import TrainingTask, TrainingResult, ReconciliationResult, ReconciliationTask, TrainingState, ModelType
+from ..core.models import (
+    TrainingTask, TrainingResult, ReconciliationResult, ReconciliationTask, 
+    TrainingState, ModelType, TransferTask, TransferResult, MetaTask, MetaResult,
+    TransferType, MetaAlgorithm
+)
 from ..core.wandb_config import init_wandb, log_metrics, log_model, finish_wandb
 from ..core.wandb_config import WandbConfig
 import gymnasium as gym
@@ -14,6 +18,9 @@ from .models.dq_learning import DQNAgent
 from .models.ppo_learning import PPO
 from .models.td3_learning import TD3
 from .models.sac_learning import SAC
+from .models.transfer_learning import TransferLearningAgent, PPOTransferAgent, SACTransferAgent
+from .models.maml_learning import MAMLAgent, TaskDistribution
+from .models.fomaml_learning import FOMAMLAgent, ImplicitFOMAMLAgent
 from gymnasium.envs.registration import register
 from lwmecps_gym.envs import LWMECPSEnv3
 import numpy as np
@@ -1558,4 +1565,403 @@ class TrainingService:
         elif task.model_type == ModelType.TD3:
             return TD3(obs_dim, act_dim)
         else:
-            raise ValueError(f"Unsupported model type: {task.model_type}") 
+            raise ValueError(f"Unsupported model type: {task.model_type}")
+
+    # Transfer Learning Methods
+    async def create_transfer_task(self, task_data: Dict[str, Any]) -> TransferTask:
+        """
+        Create a new transfer learning task.
+        
+        Args:
+            task_data: Dictionary containing transfer learning parameters
+            
+        Returns:
+            Created TransferTask instance
+        """
+        # Validate source and target tasks exist
+        source_task = await self.db.get_training_task(task_data["source_task_id"])
+        target_task = await self.db.get_training_task(task_data["target_task_id"])
+        
+        if not source_task:
+            raise ValueError(f"Source task {task_data['source_task_id']} not found")
+        if not target_task:
+            raise ValueError(f"Target task {task_data['target_task_id']} not found")
+        
+        # Generate unique group_id if not provided
+        if "group_id" not in task_data:
+            task_data["group_id"] = f"transfer-{uuid.uuid4()}"
+        
+        transfer_task = TransferTask(
+            name=task_data.get("name", f"Transfer from {source_task.name} to {target_task.name}"),
+            description=task_data.get("description", ""),
+            source_task_id=task_data["source_task_id"],
+            target_task_id=task_data["target_task_id"],
+            transfer_type=task_data.get("transfer_type", TransferType.FINE_TUNING),
+            frozen_layers=task_data.get("frozen_layers", []),
+            learning_rate=task_data.get("learning_rate", 1e-4),
+            total_episodes=task_data.get("total_episodes", 50),
+            group_id=task_data["group_id"],
+            namespace=task_data.get("namespace", "lwmecps-testapp"),
+            max_pods=task_data.get("max_pods", 50),
+            base_url=task_data.get("base_url", "http://34.51.217.76:8001"),
+            stabilization_time=task_data.get("stabilization_time", 10)
+        )
+        
+        return await self.db.create_transfer_task(transfer_task)
+    
+    async def start_transfer_training(self, task_id: str) -> Optional[TransferTask]:
+        """Start transfer learning training."""
+        task = await self.db.get_transfer_task(task_id)
+        if not task:
+            return None
+        
+        task.state = TrainingState.RUNNING
+        await self.db.update_transfer_task(task_id, task.model_dump())
+        
+        # Start training in a separate thread
+        loop = asyncio.get_running_loop()
+        thread = threading.Thread(target=self._run_transfer_training, args=(task_id, task, self, loop))
+        thread.start()
+        
+        return task
+    
+    def _run_transfer_training(self, task_id: str, task: TransferTask, service_instance, loop):
+        """Run transfer learning training in a separate thread."""
+        env = None
+        db_thread = None
+        try:
+            # Create new DB connection for this thread
+            db_thread = Database()
+            
+            # Initialize wandb
+            init_wandb(self.wandb_config, f"transfer_{task.name}_{task_id}")
+            task.wandb_run_id = wandb.run.id
+            
+            # Update task with wandb run ID
+            future = asyncio.run_coroutine_threadsafe(
+                db_thread.update_transfer_task(task_id, task.model_dump()),
+                loop
+            )
+            future.result()
+            
+            # Get source and target tasks
+            source_task_future = asyncio.run_coroutine_threadsafe(
+                db_thread.get_training_task(str(task.source_task_id)),
+                loop
+            )
+            target_task_future = asyncio.run_coroutine_threadsafe(
+                db_thread.get_training_task(str(task.target_task_id)),
+                loop
+            )
+            
+            source_task = source_task_future.result()
+            target_task = target_task_future.result()
+            
+            if not source_task or not target_task:
+                raise ValueError("Source or target task not found")
+            
+            # Create environment for target task
+            env = self._create_environment_for_task(target_task)
+            
+            # Create transfer learning agent
+            source_model_path = source_task.model_path or f"./models/model_{source_task.model_type.value}_{source_task.id}.pth"
+            
+            if source_task.model_type == ModelType.PPO:
+                agent = PPOTransferAgent(
+                    source_model_path=source_model_path,
+                    target_obs_dim=env.observation_space.shape[0] if hasattr(env.observation_space, 'shape') else 100,
+                    target_act_dim=env.action_space.shape[0] if hasattr(env.action_space, 'shape') else 4,
+                    transfer_type=task.transfer_type.value,
+                    frozen_layers=task.frozen_layers,
+                    learning_rate=task.learning_rate,
+                    max_replicas=task.max_pods,
+                    deployments=target_task.parameters.get("deployments", [])
+                )
+            elif source_task.model_type == ModelType.SAC:
+                agent = SACTransferAgent(
+                    source_model_path=source_model_path,
+                    target_obs_dim=env.observation_space.shape[0] if hasattr(env.observation_space, 'shape') else 100,
+                    target_act_dim=env.action_space.shape[0] if hasattr(env.action_space, 'shape') else 4,
+                    transfer_type=task.transfer_type.value,
+                    frozen_layers=task.frozen_layers,
+                    learning_rate=task.learning_rate,
+                    max_replicas=task.max_pods,
+                    deployments=target_task.parameters.get("deployments", [])
+                )
+            else:
+                raise ValueError(f"Transfer learning not supported for model type: {source_task.model_type}")
+            
+            # Run training
+            results = agent.train(
+                env,
+                total_episodes=task.total_episodes,
+                wandb_run_id=task.wandb_run_id,
+                training_service=service_instance,
+                task_id=task_id,
+                loop=loop,
+                db_connection=db_thread
+            )
+            
+            # Save model
+            model_path = f"./models/transfer_{task.transfer_type.value}_{task_id}.pth"
+            agent.save_model(model_path)
+            
+            # Update task state
+            task.state = TrainingState.COMPLETED
+            task.model_path = model_path
+            
+            future = asyncio.run_coroutine_threadsafe(
+                db_thread.update_transfer_task(task_id, task.model_dump()),
+                loop
+            )
+            future.result()
+            
+        except Exception as e:
+            logger.error(f"Error in transfer training: {str(e)}")
+            task.state = TrainingState.FAILED
+            task.error_message = str(e)
+            if db_thread:
+                future = asyncio.run_coroutine_threadsafe(
+                    db_thread.update_transfer_task(task_id, task.model_dump()),
+                    loop
+                )
+                future.result()
+        finally:
+            if env:
+                env.close()
+            if db_thread:
+                future = asyncio.run_coroutine_threadsafe(db_thread.close(), loop)
+                future.result()
+            finish_wandb()
+    
+    # Meta-Learning Methods
+    async def create_meta_task(self, task_data: Dict[str, Any]) -> MetaTask:
+        """
+        Create a new meta-learning task.
+        
+        Args:
+            task_data: Dictionary containing meta-learning parameters
+            
+        Returns:
+            Created MetaTask instance
+        """
+        # Generate unique group_id if not provided
+        if "group_id" not in task_data:
+            task_data["group_id"] = f"meta-{task_data['meta_algorithm']}-{uuid.uuid4()}"
+        
+        meta_task = MetaTask(
+            name=task_data.get("name", f"Meta-learning with {task_data['meta_algorithm']}"),
+            description=task_data.get("description", ""),
+            meta_algorithm=task_data["meta_algorithm"],
+            inner_lr=task_data.get("inner_lr", 0.01),
+            outer_lr=task_data.get("outer_lr", 0.001),
+            adaptation_steps=task_data.get("adaptation_steps", 5),
+            meta_batch_size=task_data.get("meta_batch_size", 4),
+            task_distribution=task_data.get("task_distribution", {}),
+            total_episodes=task_data.get("total_episodes", 100),
+            group_id=task_data["group_id"],
+            namespace=task_data.get("namespace", "lwmecps-testapp"),
+            max_pods=task_data.get("max_pods", 50),
+            base_url=task_data.get("base_url", "http://34.51.217.76:8001"),
+            stabilization_time=task_data.get("stabilization_time", 10)
+        )
+        
+        return await self.db.create_meta_task(meta_task)
+    
+    async def start_meta_training(self, task_id: str) -> Optional[MetaTask]:
+        """Start meta-learning training."""
+        task = await self.db.get_meta_task(task_id)
+        if not task:
+            return None
+        
+        task.state = TrainingState.RUNNING
+        await self.db.update_meta_task(task_id, task.model_dump())
+        
+        # Start training in a separate thread
+        loop = asyncio.get_running_loop()
+        thread = threading.Thread(target=self._run_meta_training, args=(task_id, task, self, loop))
+        thread.start()
+        
+        return task
+    
+    def _run_meta_training(self, task_id: str, task: MetaTask, service_instance, loop):
+        """Run meta-learning training in a separate thread."""
+        env = None
+        db_thread = None
+        try:
+            # Create new DB connection for this thread
+            db_thread = Database()
+            
+            # Initialize wandb
+            init_wandb(self.wandb_config, f"meta_{task.meta_algorithm}_{task.name}_{task_id}")
+            task.wandb_run_id = wandb.run.id
+            
+            # Update task with wandb run ID
+            future = asyncio.run_coroutine_threadsafe(
+                db_thread.update_meta_task(task_id, task.model_dump()),
+                loop
+            )
+            future.result()
+            
+            # Create task distribution
+            task_distribution = TaskDistribution(
+                task_types=["kubernetes_scaling", "load_balancing", "resource_optimization"],
+                task_params={
+                    "kubernetes_scaling": {
+                        "max_pods": 20,
+                        "cpu_requirement": 1.0,
+                        "memory_requirement": 1000,
+                        "scaling_strategy": "horizontal"
+                    },
+                    "load_balancing": {
+                        "traffic_pattern": "uniform",
+                        "latency_threshold": 0.5,
+                        "balancing_algorithm": "round_robin"
+                    },
+                    "resource_optimization": {
+                        "optimization_target": "cpu",
+                        "constraint_weight": 0.5,
+                        "optimization_method": "gradient_based"
+                    }
+                },
+                num_tasks=10
+            )
+            
+            # Create meta-learning agent
+            if task.meta_algorithm == MetaAlgorithm.MAML:
+                agent = MAMLAgent(
+                    obs_dim=100,  # Will be determined dynamically
+                    act_dim=4,    # Will be determined dynamically
+                    hidden_size=256,
+                    inner_lr=task.inner_lr,
+                    outer_lr=task.outer_lr,
+                    adaptation_steps=task.adaptation_steps,
+                    meta_batch_size=task.meta_batch_size,
+                    task_distribution=task_distribution,
+                    max_replicas=task.max_pods,
+                    deployments=["lwmecps-testapp-server-bs1", "lwmecps-testapp-server-bs2", 
+                               "lwmecps-testapp-server-bs3", "lwmecps-testapp-server-bs4"]
+                )
+            elif task.meta_algorithm == MetaAlgorithm.FOMAML:
+                agent = FOMAMLAgent(
+                    obs_dim=100,
+                    act_dim=4,
+                    hidden_size=256,
+                    inner_lr=task.inner_lr,
+                    outer_lr=task.outer_lr,
+                    adaptation_steps=task.adaptation_steps,
+                    meta_batch_size=task.meta_batch_size,
+                    task_distribution=task_distribution,
+                    max_replicas=task.max_pods,
+                    deployments=["lwmecps-testapp-server-bs1", "lwmecps-testapp-server-bs2", 
+                               "lwmecps-testapp-server-bs3", "lwmecps-testapp-server-bs4"]
+                )
+            elif task.meta_algorithm == MetaAlgorithm.IMPLICIT_FOMAML:
+                agent = ImplicitFOMAMLAgent(
+                    obs_dim=100,
+                    act_dim=4,
+                    hidden_size=256,
+                    inner_lr=task.inner_lr,
+                    outer_lr=task.outer_lr,
+                    adaptation_steps=task.adaptation_steps,
+                    meta_batch_size=task.meta_batch_size,
+                    task_distribution=task_distribution,
+                    max_replicas=task.max_pods,
+                    deployments=["lwmecps-testapp-server-bs1", "lwmecps-testapp-server-bs2", 
+                               "lwmecps-testapp-server-bs3", "lwmecps-testapp-server-bs4"]
+                )
+            else:
+                raise ValueError(f"Unsupported meta-algorithm: {task.meta_algorithm}")
+            
+            # Create environment factory
+            def env_factory(task_config):
+                return self._create_environment_for_meta_task(task_config, task)
+            
+            # Run meta-training
+            results = agent.meta_train(
+                env_factory=env_factory,
+                meta_episodes=task.total_episodes,
+                wandb_run_id=task.wandb_run_id,
+                training_service=service_instance,
+                task_id=task_id,
+                loop=loop,
+                db_connection=db_thread
+            )
+            
+            # Save model
+            model_path = f"./models/meta_{task.meta_algorithm.value}_{task_id}.pth"
+            agent.save_model(model_path)
+            
+            # Update task state
+            task.state = TrainingState.COMPLETED
+            task.model_path = model_path
+            
+            future = asyncio.run_coroutine_threadsafe(
+                db_thread.update_meta_task(task_id, task.model_dump()),
+                loop
+            )
+            future.result()
+            
+        except Exception as e:
+            logger.error(f"Error in meta training: {str(e)}")
+            task.state = TrainingState.FAILED
+            task.error_message = str(e)
+            if db_thread:
+                future = asyncio.run_coroutine_threadsafe(
+                    db_thread.update_meta_task(task_id, task.model_dump()),
+                    loop
+                )
+                future.result()
+        finally:
+            if env:
+                env.close()
+            if db_thread:
+                future = asyncio.run_coroutine_threadsafe(db_thread.close(), loop)
+                future.result()
+            finish_wandb()
+    
+    def _create_environment_for_task(self, task: TrainingTask) -> gym.Env:
+        """Create environment for a specific task."""
+        # This is a simplified version - in practice you'd use task parameters
+        return gym.make(
+            "lwmecps-v3",
+            node_name=["node1", "node2"],
+            max_hardware={"cpu": 8, "ram": 16000, "tx_bandwidth": 1000, "rx_bandwidth": 1000, 
+                         "read_disks_bandwidth": 500, "write_disks_bandwidth": 500, "avg_latency": 300},
+            pod_usage={"cpu": 2, "ram": 2000, "tx_bandwidth": 20, "rx_bandwidth": 20, 
+                      "read_disks_bandwidth": 100, "write_disks_bandwidth": 100},
+            node_info={"node1": {"cpu": 4, "ram": 8000, "tx_bandwidth": 100, "rx_bandwidth": 100, 
+                                "read_disks_bandwidth": 300, "write_disks_bandwidth": 300, "avg_latency": 10},
+                      "node2": {"cpu": 4, "ram": 8000, "tx_bandwidth": 100, "rx_bandwidth": 100, 
+                                "read_disks_bandwidth": 300, "write_disks_bandwidth": 300, "avg_latency": 20}},
+            num_nodes=2,
+            namespace=task.namespace,
+            deployments=["lwmecps-testapp-server-bs1", "lwmecps-testapp-server-bs2", 
+                       "lwmecps-testapp-server-bs3", "lwmecps-testapp-server-bs4"],
+            max_pods=task.max_pods,
+            group_id=task.group_id,
+            env_config={"base_url": task.base_url, "stabilization_time": task.stabilization_time}
+        )
+    
+    def _create_environment_for_meta_task(self, task_config: Dict[str, Any], meta_task: MetaTask) -> gym.Env:
+        """Create environment for a meta-learning task."""
+        # Create environment based on task configuration
+        return gym.make(
+            "lwmecps-v3",
+            node_name=["node1", "node2"],
+            max_hardware={"cpu": 8, "ram": 16000, "tx_bandwidth": 1000, "rx_bandwidth": 1000, 
+                         "read_disks_bandwidth": 500, "write_disks_bandwidth": 500, "avg_latency": 300},
+            pod_usage={"cpu": 2, "ram": 2000, "tx_bandwidth": 20, "rx_bandwidth": 20, 
+                      "read_disks_bandwidth": 100, "write_disks_bandwidth": 100},
+            node_info={"node1": {"cpu": 4, "ram": 8000, "tx_bandwidth": 100, "rx_bandwidth": 100, 
+                                "read_disks_bandwidth": 300, "write_disks_bandwidth": 300, "avg_latency": 10},
+                      "node2": {"cpu": 4, "ram": 8000, "tx_bandwidth": 100, "rx_bandwidth": 100, 
+                                "read_disks_bandwidth": 300, "write_disks_bandwidth": 300, "avg_latency": 20}},
+            num_nodes=2,
+            namespace=meta_task.namespace,
+            deployments=["lwmecps-testapp-server-bs1", "lwmecps-testapp-server-bs2", 
+                       "lwmecps-testapp-server-bs3", "lwmecps-testapp-server-bs4"],
+            max_pods=meta_task.max_pods,
+            group_id=meta_task.group_id,
+            env_config={"base_url": meta_task.base_url, "stabilization_time": meta_task.stabilization_time}
+        ) 
