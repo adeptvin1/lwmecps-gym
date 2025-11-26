@@ -349,8 +349,17 @@ class TrainingService:
                     batch_size=task.parameters.get("batch_size", 32)
                 )
             elif task.model_type == ModelType.PPO:
-                # Calculate max_replicas based on CPU capacity
-                max_replicas = int(max_hardware["cpu"] / pod_usage["cpu"])
+                # Use max_replicas from environment to ensure consistency
+                # The environment calculates it based on hardware constraints
+                max_replicas = env.max_replicas
+                task_max_replicas = task.parameters.get("max_replicas")
+                if task_max_replicas is not None and task_max_replicas != max_replicas:
+                    logger.warning(
+                        f"max_replicas mismatch: task parameters specify {task_max_replicas}, "
+                        f"but environment calculates {max_replicas} based on hardware constraints. "
+                        f"Using environment value {max_replicas} to ensure action space consistency."
+                    )
+                logger.info(f"Creating PPO agent with obs_dim={obs_dim}, act_dim={act_dim}, max_replicas={max_replicas} (from environment)")
                 agent = PPO(
                     obs_dim=obs_dim,
                     act_dim=act_dim,
@@ -371,10 +380,20 @@ class TrainingService:
                         "lwmecps-testapp-server-bs3",
                         "lwmecps-testapp-server-bs4"
                     ],
-                    max_replicas=max_replicas  # Use calculated value
+                    max_replicas=max_replicas
                 )
             elif task.model_type == ModelType.TD3:
-                max_replicas = int(max_hardware["cpu"] / pod_usage["cpu"])
+                # Use max_replicas from environment to ensure consistency
+                # The environment calculates it based on hardware constraints
+                max_replicas = env.max_replicas
+                task_max_replicas = task.parameters.get("max_replicas")
+                if task_max_replicas is not None and task_max_replicas != max_replicas:
+                    logger.warning(
+                        f"max_replicas mismatch: task parameters specify {task_max_replicas}, "
+                        f"but environment calculates {max_replicas} based on hardware constraints. "
+                        f"Using environment value {max_replicas} to ensure action space consistency."
+                    )
+                logger.info(f"Creating TD3 agent with obs_dim={obs_dim}, act_dim={act_dim}, max_replicas={max_replicas} (from environment)")
                 agent = TD3(
                     obs_dim=obs_dim,
                     act_dim=act_dim,
@@ -396,8 +415,17 @@ class TrainingService:
                     max_replicas=max_replicas
                 )
             elif task.model_type == ModelType.SAC:
-                max_replicas = task.parameters.get("max_replicas", 10)
-                logger.info(f"Creating SAC agent with obs_dim={obs_dim}, act_dim={act_dim}, max_replicas={max_replicas}")
+                # Use max_replicas from environment to ensure consistency
+                # The environment calculates it based on hardware constraints
+                max_replicas = env.max_replicas
+                task_max_replicas = task.parameters.get("max_replicas")
+                if task_max_replicas is not None and task_max_replicas != max_replicas:
+                    logger.warning(
+                        f"max_replicas mismatch: task parameters specify {task_max_replicas}, "
+                        f"but environment calculates {max_replicas} based on hardware constraints. "
+                        f"Using environment value {max_replicas} to ensure action space consistency."
+                    )
+                logger.info(f"Creating SAC agent with obs_dim={obs_dim}, act_dim={act_dim}, max_replicas={max_replicas} (from environment)")
                 agent = SAC(
                     obs_dim=obs_dim,
                     act_dim=act_dim,
@@ -1020,6 +1048,9 @@ class TrainingService:
         # Create agent with correct parameters
         agent = None
         if training_task.model_type == ModelType.PPO:
+            # Use max_replicas from environment to ensure consistency
+            max_replicas = env.max_replicas
+            logger.info(f"Creating PPO agent with max_replicas={max_replicas} (from environment)")
             agent = PPO(
                 obs_dim=obs_dim,
                 act_dim=act_dim,
@@ -1035,12 +1066,13 @@ class TrainingService:
                 n_epochs=training_task.parameters.get("n_epochs", 10),
                 device=training_task.parameters.get("device", "cpu"),
                 deployments=saved_deployments,
-                max_replicas=saved_max_replicas
+                max_replicas=max_replicas
             )
         elif training_task.model_type == ModelType.SAC:
-            # Use max_replicas from task parameters to ensure consistency with training
-            max_replicas = training_task.parameters.get("max_replicas", saved_max_replicas)
-            logger.info(f"Creating SAC agent with max_replicas={max_replicas} (from task parameters)")
+            # Use max_replicas from environment to ensure consistency
+            # The environment calculates it based on hardware constraints
+            max_replicas = env.max_replicas
+            logger.info(f"Creating SAC agent with max_replicas={max_replicas} (from environment)")
             agent = SAC(
                 obs_dim=obs_dim,
                 act_dim=act_dim,
@@ -1057,6 +1089,9 @@ class TrainingService:
                 max_replicas=max_replicas
             )
         elif training_task.model_type == ModelType.TD3:
+            # Use max_replicas from environment to ensure consistency
+            max_replicas = env.max_replicas
+            logger.info(f"Creating TD3 agent with max_replicas={max_replicas} (from environment)")
             agent = TD3(
                 obs_dim=obs_dim,
                 act_dim=act_dim,
@@ -1070,7 +1105,7 @@ class TrainingService:
                 batch_size=training_task.parameters.get("batch_size", 256),
                 device=training_task.parameters.get("device", "cpu"),
                 deployments=saved_deployments,
-                max_replicas=saved_max_replicas
+                max_replicas=max_replicas
             )
         elif training_task.model_type == ModelType.Q_LEARNING:
             agent = QLearningAgent(
@@ -1357,6 +1392,9 @@ class TrainingService:
         # Create agent with correct parameters
         agent = None
         if task.model_type == ModelType.PPO:
+            # Use max_replicas from environment to ensure consistency
+            max_replicas = env.max_replicas
+            logger.info(f"Creating PPO agent with max_replicas={max_replicas} (from environment)")
             agent = PPO(
                 obs_dim=obs_dim,
                 act_dim=act_dim,
@@ -1372,12 +1410,13 @@ class TrainingService:
                 n_epochs=task.parameters.get("n_epochs", 10),
                 device=task.parameters.get("device", "cpu"),
                 deployments=saved_deployments,
-                max_replicas=saved_max_replicas
+                max_replicas=max_replicas
             )
         elif task.model_type == ModelType.SAC:
-            # Use max_replicas from task parameters to ensure consistency with training
-            max_replicas = task.parameters.get("max_replicas", saved_max_replicas)
-            logger.info(f"Creating SAC agent with max_replicas={max_replicas} (from task parameters)")
+            # Use max_replicas from environment to ensure consistency
+            # The environment calculates it based on hardware constraints
+            max_replicas = env.max_replicas
+            logger.info(f"Creating SAC agent with max_replicas={max_replicas} (from environment)")
             agent = SAC(
                 obs_dim=obs_dim,
                 act_dim=act_dim,
@@ -1394,6 +1433,9 @@ class TrainingService:
                 max_replicas=max_replicas
             )
         elif task.model_type == ModelType.TD3:
+            # Use max_replicas from environment to ensure consistency
+            max_replicas = env.max_replicas
+            logger.info(f"Creating TD3 agent with max_replicas={max_replicas} (from environment)")
             agent = TD3(
                 obs_dim=obs_dim,
                 act_dim=act_dim,
@@ -1407,7 +1449,7 @@ class TrainingService:
                 batch_size=task.parameters.get("batch_size", 256),
                 device=task.parameters.get("device", "cpu"),
                 deployments=saved_deployments,
-                max_replicas=saved_max_replicas
+                max_replicas=max_replicas
             )
         elif task.model_type == ModelType.Q_LEARNING:
             agent = QLearningAgent(
@@ -1663,6 +1705,10 @@ class TrainingService:
             # Create environment for target task
             env = self._create_environment_for_task(target_task)
             
+            # Use max_replicas from environment to ensure consistency
+            max_replicas = env.max_replicas
+            logger.info(f"Creating transfer learning agent with max_replicas={max_replicas} (from environment)")
+            
             # Create transfer learning agent
             source_model_path = source_task.model_path or f"./models/model_{source_task.model_type.value}_{source_task.id}.pth"
             
@@ -1674,7 +1720,7 @@ class TrainingService:
                     transfer_type=task.transfer_type.value,
                     frozen_layers=task.frozen_layers,
                     learning_rate=task.learning_rate,
-                    max_replicas=task.max_pods,
+                    max_replicas=max_replicas,
                     deployments=target_task.parameters.get("deployments", [])
                 )
             elif source_task.model_type == ModelType.SAC:
@@ -1685,7 +1731,7 @@ class TrainingService:
                     transfer_type=task.transfer_type.value,
                     frozen_layers=task.frozen_layers,
                     learning_rate=task.learning_rate,
-                    max_replicas=task.max_pods,
+                    max_replicas=max_replicas,
                     deployments=target_task.parameters.get("deployments", [])
                 )
             else:

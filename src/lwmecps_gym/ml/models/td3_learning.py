@@ -164,6 +164,12 @@ class TD3:
         
         # TD3 specific: update counter for policy delay
         self.update_count = 0
+        
+        # Exploration parameters for discrete actions
+        self.epsilon = 1.0  # Start with full exploration
+        self.epsilon_min = 0.05  # Minimum exploration rate
+        self.epsilon_decay = 0.995  # Decay rate per episode
+        self.total_steps = 0  # Track total steps for epsilon decay
     
     def _flatten_observation(self, obs):
         """Flatten observation into a 1D vector."""
@@ -201,17 +207,43 @@ class TD3:
         
         return np.array(obs_vector, dtype=np.float32)
     
-    def select_action(self, obs):
+    def select_action(self, obs, explore: bool = True):
+        """
+        Select action with improved exploration for discrete actions.
+        
+        Args:
+            obs: Observation from environment
+            explore: Whether to use exploration (default: True)
+        
+        Returns:
+            Action array
+        """
         obs = self._flatten_observation(obs)
         state = torch.FloatTensor(obs).unsqueeze(0).to(self.device)
-        action = self.actor(state).cpu().data.numpy().squeeze()
         
-        # Add noise for exploration
-        noise = np.random.normal(0, self.noise, size=action.shape)
-        action = (action + noise).round()  # Round to nearest integer for discrete action
+        # Epsilon-greedy exploration for discrete actions
+        if explore and np.random.random() < self.epsilon:
+            # Random exploration: sample random actions for each deployment
+            action = np.random.randint(0, self.max_replicas + 1, size=self.act_dim, dtype=np.int32)
+            logger.debug(f"Random exploration: {action}")
+        else:
+            # Use actor to select action
+            with torch.no_grad():
+                action = self.actor(state).cpu().data.numpy().squeeze()
+            
+            # Add noise for additional exploration (even when not using epsilon-greedy)
+            if explore:
+                # For discrete actions, add noise that can change the action
+                # Use a larger noise scale to ensure action changes
+                noise = np.random.normal(0, max(self.noise, 0.5), size=action.shape)
+                action = (action + noise).round()
+                
+                # Clip to valid action range
+                action = np.clip(action, 0, self.max_replicas)
+            
+            action = action.astype(np.int32)
         
-        # Clip to valid action range and ensure correct type
-        action = np.clip(action, 0, self.max_replicas).astype(np.int32)
+        self.total_steps += 1
         
         return action
     
@@ -403,6 +435,9 @@ class TD3:
                 self.episode_rewards.append(episode_reward)
                 self.episode_lengths.append(episode_length)
                 
+                # Decay epsilon for exploration
+                self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
+                
                 # Update metrics lists
                 self.actor_losses.append(update_metrics["actor_loss"])
                 self.critic_losses.append(update_metrics["critic_loss"])
@@ -429,7 +464,7 @@ class TD3:
                     f"Length: {episode_length}, "
                     f"Actor Loss: {update_metrics['actor_loss']:.3f}, "
                     f"Critic Loss: {update_metrics['critic_loss']:.3f}, "
-                    f"Noise: {self.noise:.3f}, "
+                    f"Epsilon: {self.epsilon:.3f}, "
                     f"Latency: {avg_latency:.2f}"
                 )
 
@@ -441,7 +476,8 @@ class TD3:
                         "train/episode_reward_avg": self.mean_rewards[-1],
                         "train/actor_loss": update_metrics["actor_loss"],
                         "train/critic_loss": update_metrics["critic_loss"],
-                        "train/exploration_rate": self.noise,  # TD3 exploration rate
+                        "train/exploration_rate": self.epsilon,  # Epsilon-greedy exploration rate
+                        "train/noise": self.noise,  # TD3 noise parameter
                         "train/training_stability": training_stability,
                         
                         # Task-specific metrics
