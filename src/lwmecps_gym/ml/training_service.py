@@ -40,6 +40,34 @@ import os
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def get_env_max_replicas(env) -> int:
+    """
+    Safely get max_replicas from environment, handling TimeLimit wrapper.
+    
+    Args:
+        env: Gymnasium environment (may be wrapped in TimeLimit)
+        
+    Returns:
+        max_replicas value from the unwrapped environment
+    """
+    # Try direct access first
+    if hasattr(env, 'max_replicas'):
+        return env.max_replicas
+    
+    # Try unwrapped (for TimeLimit and other wrappers)
+    if hasattr(env, 'unwrapped'):
+        return env.unwrapped.max_replicas
+    
+    # Try env.env (TimeLimit wrapper pattern)
+    if hasattr(env, 'env') and hasattr(env.env, 'max_replicas'):
+        return env.env.max_replicas
+    
+    # Fallback: calculate from action space
+    if hasattr(env, 'action_space') and hasattr(env.action_space, 'nvec'):
+        return int(max(env.action_space.nvec) - 1)
+    
+    raise AttributeError(f"Could not find max_replicas in environment of type {type(env)}")
+
 def convert_keys_to_str(data: Any) -> Any:
     if isinstance(data, dict):
         return {str(k): convert_keys_to_str(v) for k, v in data.items()}
@@ -351,7 +379,7 @@ class TrainingService:
             elif task.model_type == ModelType.PPO:
                 # Use max_replicas from environment to ensure consistency
                 # The environment calculates it based on hardware constraints
-                max_replicas = env.max_replicas
+                max_replicas = get_env_max_replicas(env)
                 task_max_replicas = task.parameters.get("max_replicas")
                 if task_max_replicas is not None and task_max_replicas != max_replicas:
                     logger.warning(
@@ -385,7 +413,7 @@ class TrainingService:
             elif task.model_type == ModelType.TD3:
                 # Use max_replicas from environment to ensure consistency
                 # The environment calculates it based on hardware constraints
-                max_replicas = env.max_replicas
+                max_replicas = get_env_max_replicas(env)
                 task_max_replicas = task.parameters.get("max_replicas")
                 if task_max_replicas is not None and task_max_replicas != max_replicas:
                     logger.warning(
@@ -417,7 +445,7 @@ class TrainingService:
             elif task.model_type == ModelType.SAC:
                 # Use max_replicas from environment to ensure consistency
                 # The environment calculates it based on hardware constraints
-                max_replicas = env.max_replicas
+                max_replicas = get_env_max_replicas(env)
                 task_max_replicas = task.parameters.get("max_replicas")
                 if task_max_replicas is not None and task_max_replicas != max_replicas:
                     logger.warning(
