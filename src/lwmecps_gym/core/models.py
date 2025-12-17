@@ -23,6 +23,7 @@ class ModelType(str, Enum):
     TRANSFER_LEARNING = "transfer_learning"
     MAML = "maml"
     FOMAML = "fomaml"
+    HEURISTIC = "heuristic"
     # Add more model types as needed
 
 class TransferType(str, Enum):

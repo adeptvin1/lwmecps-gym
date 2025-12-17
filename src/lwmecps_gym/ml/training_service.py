@@ -21,6 +21,7 @@ from .models.sac_learning import SAC
 from .models.transfer_learning import TransferLearningAgent, PPOTransferAgent, SACTransferAgent
 from .models.maml_learning import MAMLAgent, TaskDistribution
 from .models.fomaml_learning import FOMAMLAgent, ImplicitFOMAMLAgent
+from .models.heuristic_baseline import HeuristicBaseline
 from gymnasium.envs.registration import register
 from lwmecps_gym.envs import LWMECPSEnv3
 import numpy as np
@@ -474,6 +475,19 @@ class TrainingService:
                     ],
                     max_replicas=max_replicas
                 )
+            elif task.model_type == ModelType.HEURISTIC:
+                # Use max_replicas from environment
+                max_replicas = get_env_max_replicas(env)
+                heuristic_type = task.parameters.get("heuristic_type", "uniform")
+                static_replicas = task.parameters.get("static_replicas", None)
+                
+                logger.info(f"Creating HeuristicBaseline agent with type={heuristic_type}, max_replicas={max_replicas}")
+                agent = HeuristicBaseline(
+                    heuristic_type=heuristic_type,
+                    num_deployments=act_dim,
+                    max_replicas=max_replicas,
+                    static_replicas=static_replicas
+                )
             else:
                 raise ValueError(f"Unsupported model type: {task.model_type}")
 
@@ -489,6 +503,10 @@ class TrainingService:
                     db_connection=db_thread
                 )
             elif task.model_type in [ModelType.TD3, ModelType.SAC]:
+                results = agent.train(env, total_episodes=task.total_episodes, wandb_run_id=task.wandb_run_id)
+            elif task.model_type == ModelType.HEURISTIC:
+                # Heuristic baseline (no actual training, just evaluation)
+                logger.info(f"Running {task.parameters.get('heuristic_type', 'uniform')} heuristic baseline")
                 results = agent.train(env, total_episodes=task.total_episodes, wandb_run_id=task.wandb_run_id)
             else:
                 # Q-learning and DQN training
@@ -509,7 +527,7 @@ class TrainingService:
                             logger.info(f"Final total reward: {results['total_reward'][-1] if results['total_reward'] else 'N/A'}")
 
             # Save results
-            if task.model_type in [ModelType.PPO, ModelType.TD3, ModelType.SAC]:
+            if task.model_type in [ModelType.PPO, ModelType.TD3, ModelType.SAC, ModelType.HEURISTIC]:
                 for episode in range(len(results["episode_rewards"])):
                     metrics = {
                         "total_reward": results["episode_rewards"][episode],
@@ -522,6 +540,10 @@ class TrainingService:
                     }
                     if task.model_type == ModelType.SAC:
                         metrics["alpha_loss"] = results["alpha_losses"][episode]
+                    elif task.model_type == ModelType.HEURISTIC:
+                        # For heuristic, add latency metric
+                        if "episode_latencies" in results and episode < len(results["episode_latencies"]):
+                            metrics["avg_latency"] = results["episode_latencies"][episode]
                     future = asyncio.run_coroutine_threadsafe(
                         self.save_training_result(task_id, episode, metrics, db_connection=db_thread),
                         loop
