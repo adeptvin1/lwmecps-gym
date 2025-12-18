@@ -82,7 +82,7 @@ docker-compose.override.yml
 *.mlpackage
 
 # Data files
-*.json
+# *.json
 !package.json
 !package-lock.json
 !k8s/*.json

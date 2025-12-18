@@ -1,0 +1,38 @@
+{
+  "name": "PPO Training - Run 2 (seed=123, Profile A)",
+  "description": "PPO training run 2 with optimized hyperparameters, 24 hours real time, Profile A",
+  "model_type": "ppo",
+  "parameters": {
+    "learning_rate": 0.000306,
+    "discount_factor": 0.9896,
+    "batch_size": 217,
+    "hidden_size": 230,
+    "entropy_coef": 0.22,
+    "n_epochs": 10,
+    "clip_epsilon": 0.2,
+    "value_function_coef": 0.5,
+    "n_steps": 2048,
+    "lambda": 0.95,
+    "device": "cpu",
+    "deployments": [
+      "lwmecps-testapp-server-bs1",
+      "lwmecps-testapp-server-bs2",
+      "lwmecps-testapp-server-bs3",
+      "lwmecps-testapp-server-bs4"
+    ],
+    "max_replicas": 10
+  },
+  "total_episodes": 192,
+  "group_id": "ppo-training-run2-profilea-seed123",
+  "namespace": "lwmecps-testapp",
+  "max_pods": 50,
+  "base_url": "http://34.51.217.76:8001",
+  "stabilization_time": 10,
+  "env_config": {
+    "base_url": "http://34.51.217.76:8001",
+    "stabilization_time": 10,
+    "env_name": "lwmecps-v3",
+    "load_profile": "profile_a"
+  }
+}
+
