@@ -1,5 +1,5 @@
 {
-  "name": "PPO Training - Run 1 (seed=42, Profile A)",
+  "name": "PPO Training - Run 1 (Profile A)",
   "description": "PPO training run 1 with optimized hyperparameters, 24 hours real time, Profile A",
   "model_type": "ppo",
   "parameters": {
@@ -23,7 +23,7 @@
     "max_replicas": 10
   },
   "total_episodes": 192,
-  "group_id": "ppo-training-run1-profilea-seed42",
+  "group_id": "ppo-training-run1-profilea",
   "namespace": "lwmecps-testapp",
   "max_pods": 50,
   "base_url": "http://34.51.217.76:8001",

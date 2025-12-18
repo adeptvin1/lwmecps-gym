@@ -1,5 +1,5 @@
 {
-  "name": "SAC Training - Run 2 (seed=123, Profile A)",
+  "name": "SAC Training - Run 2 (Profile A)",
   "description": "SAC training run 2 with optimized hyperparameters, 24 hours real time, Profile A",
   "model_type": "sac",
   "parameters": {
@@ -21,7 +21,7 @@
     "max_replicas": 10
   },
   "total_episodes": 320,
-  "group_id": "sac-training-run2-profilea-seed123",
+  "group_id": "sac-training-run2-profilea",
   "namespace": "lwmecps-testapp",
   "max_pods": 50,
   "base_url": "http://34.51.217.76:8001",

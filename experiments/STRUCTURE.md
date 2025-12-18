@@ -13,17 +13,17 @@
 experiments/
 ├── training/                    # Обучение
 │   ├── ppo/                     # PPO (3 запуска)
-│   │   ├── run1.json           # seed=42
-│   │   ├── run2.json           # seed=123
-│   │   └── run3.json           # seed=456
+│   │   ├── run1.json
+│   │   ├── run2.json
+│   │   └── run3.json
 │   ├── sac/                     # SAC (3 запуска)
-│   │   ├── run1.json           # seed=42, 1600 шагов
-│   │   ├── run2.json           # seed=123, 1600 шагов
-│   │   └── run3.json           # seed=456, 1600 шагов
+│   │   ├── run1.json           # 1600 шагов
+│   │   ├── run2.json           # 1600 шагов
+│   │   └── run3.json           # 1600 шагов
 │   ├── td3/                     # TD3 (3 запуска)
-│   │   ├── run1.json           # seed=42, 960 шагов
-│   │   ├── run2.json           # seed=123, 960 шагов
-│   │   └── run3.json           # seed=456, 960 шагов
+│   │   ├── run1.json           # 960 шагов
+│   │   ├── run2.json           # 960 шагов
+│   │   └── run3.json           # 960 шагов
 │   └── baseline/                # Baseline эвристики
 │       ├── static/              # Static (3 запуска)
 │       │   ├── run1.json
