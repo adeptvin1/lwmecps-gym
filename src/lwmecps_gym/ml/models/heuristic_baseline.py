@@ -337,4 +337,65 @@ class HeuristicBaseline:
         )
         
         return results
+    
+    def save_model(self, path: str):
+        """
+        Save model method for compatibility with training service.
+        Heuristic baselines don't have trainable parameters, so we create a file
+        with metadata for compatibility.
+        
+        Args:
+            path: Path where model would be saved
+        """
+        import os
+        import json
+        
+        # Create directory if it doesn't exist
+        dir_path = os.path.dirname(path)
+        if dir_path:
+            os.makedirs(dir_path, exist_ok=True)
+        
+        # Save metadata only (no trainable parameters)
+        metadata = {
+            "heuristic_type": self.heuristic_type,
+            "num_deployments": self.num_deployments,
+            "max_replicas": self.max_replicas,
+            "static_replicas": self.static_replicas,
+            "model_type": "heuristic_baseline"
+        }
+        
+        # Save as JSON file for compatibility
+        with open(path, 'w') as f:
+            json.dump(metadata, f, indent=2)
+        
+        logger.info(f"Heuristic baseline metadata saved to {path} (no trainable parameters)")
+    
+    def load_model(self, path: str):
+        """
+        Load model method for compatibility with training service.
+        Loads metadata from saved heuristic baseline configuration.
+        
+        Args:
+            path: Path where model metadata was saved
+        """
+        import os
+        import json
+        
+        if not os.path.exists(path):
+            logger.warning(f"Heuristic baseline metadata file not found at {path}")
+            return
+        
+        try:
+            with open(path, 'r') as f:
+                metadata = json.load(f)
+            
+            # Restore configuration from metadata
+            self.heuristic_type = metadata.get("heuristic_type", self.heuristic_type)
+            self.num_deployments = metadata.get("num_deployments", self.num_deployments)
+            self.max_replicas = metadata.get("max_replicas", self.max_replicas)
+            self.static_replicas = metadata.get("static_replicas", self.static_replicas)
+            
+            logger.info(f"Heuristic baseline metadata loaded from {path}")
+        except Exception as e:
+            logger.error(f"Error loading heuristic baseline metadata from {path}: {e}")
 
