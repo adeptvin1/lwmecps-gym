@@ -12,6 +12,7 @@ import numpy as np
 import logging
 from typing import Dict, List, Tuple, Optional, Any
 import gymnasium as gym
+import wandb
 
 logger = logging.getLogger(__name__)
 
@@ -277,6 +278,36 @@ class HeuristicBaseline:
             episode_rewards.append(episode_reward)
             episode_lengths.append(episode_length)
             episode_latencies.append(avg_latency)
+            
+            # Calculate mean metrics for logging (using rolling average over last 100 episodes, like SAC/TD3/PPO)
+            mean_reward = np.mean(episode_rewards[-100:])
+            mean_length = np.mean(episode_lengths[-100:])
+            training_stability = np.std(episode_rewards[-100:]) if len(episode_rewards) >= 10 else 0.0
+            success_rate = 1.0 if episode_reward > 0 else 0.0
+            
+            if wandb_run_id:
+                wandb.log({
+                    # Core training metrics
+                    "train/episode_reward": episode_reward,
+                    "train/episode_reward_avg": mean_reward,
+                    "train/actor_loss": 0.0,  # Heuristic doesn't have actor loss
+                    "train/critic_loss": 0.0,  # Heuristic doesn't have critic loss
+                    "train/exploration_rate": 0.0,  # Heuristic doesn't use exploration
+                    "train/training_stability": training_stability,
+                    
+                    # Task-specific metrics
+                    "task/avg_latency": avg_latency,
+                    "task/success_rate": success_rate,
+                    
+                    # Comparison metrics (heuristic doesn't converge, so set to 0)
+                    "comparison/steps_to_convergence": 0,
+                    
+                    # Additional metrics
+                    "train/episode_length": episode_length,
+                    "train/total_loss": 0.0,  # Heuristic doesn't have loss
+                    "train/mean_length": mean_length,
+                    "episode": episode + 1
+                })
             
             if (episode + 1) % 10 == 0:
                 logger.info(
