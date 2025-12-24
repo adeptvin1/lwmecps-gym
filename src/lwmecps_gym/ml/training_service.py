@@ -1099,7 +1099,7 @@ class TrainingService:
         agent = None
         if training_task.model_type == ModelType.PPO:
             # Use max_replicas from environment to ensure consistency
-            max_replicas = env.max_replicas
+            max_replicas = get_env_max_replicas(env)
             logger.info(f"Creating PPO agent with max_replicas={max_replicas} (from environment)")
             agent = PPO(
                 obs_dim=obs_dim,
@@ -1121,7 +1121,7 @@ class TrainingService:
         elif training_task.model_type == ModelType.SAC:
             # Use max_replicas from environment to ensure consistency
             # The environment calculates it based on hardware constraints
-            max_replicas = env.max_replicas
+            max_replicas = get_env_max_replicas(env)
             logger.info(f"Creating SAC agent with max_replicas={max_replicas} (from environment)")
             agent = SAC(
                 obs_dim=obs_dim,
@@ -1140,7 +1140,7 @@ class TrainingService:
             )
         elif training_task.model_type == ModelType.TD3:
             # Use max_replicas from environment to ensure consistency
-            max_replicas = env.max_replicas
+            max_replicas = get_env_max_replicas(env)
             logger.info(f"Creating TD3 agent with max_replicas={max_replicas} (from environment)")
             agent = TD3(
                 obs_dim=obs_dim,
@@ -1443,7 +1443,7 @@ class TrainingService:
         agent = None
         if task.model_type == ModelType.PPO:
             # Use max_replicas from environment to ensure consistency
-            max_replicas = env.max_replicas
+            max_replicas = get_env_max_replicas(env)
             logger.info(f"Creating PPO agent with max_replicas={max_replicas} (from environment)")
             agent = PPO(
                 obs_dim=obs_dim,
@@ -1465,7 +1465,7 @@ class TrainingService:
         elif task.model_type == ModelType.SAC:
             # Use max_replicas from environment to ensure consistency
             # The environment calculates it based on hardware constraints
-            max_replicas = env.max_replicas
+            max_replicas = get_env_max_replicas(env)
             logger.info(f"Creating SAC agent with max_replicas={max_replicas} (from environment)")
             agent = SAC(
                 obs_dim=obs_dim,
@@ -1484,7 +1484,7 @@ class TrainingService:
             )
         elif task.model_type == ModelType.TD3:
             # Use max_replicas from environment to ensure consistency
-            max_replicas = env.max_replicas
+            max_replicas = get_env_max_replicas(env)
             logger.info(f"Creating TD3 agent with max_replicas={max_replicas} (from environment)")
             agent = TD3(
                 obs_dim=obs_dim,
@@ -1756,7 +1756,7 @@ class TrainingService:
             env = self._create_environment_for_task(target_task)
             
             # Use max_replicas from environment to ensure consistency
-            max_replicas = env.max_replicas
+            max_replicas = get_env_max_replicas(env)
             logger.info(f"Creating transfer learning agent with max_replicas={max_replicas} (from environment)")
             
             # Create transfer learning agent
