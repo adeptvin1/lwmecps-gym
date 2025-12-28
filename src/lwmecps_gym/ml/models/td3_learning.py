@@ -397,7 +397,24 @@ class TD3:
         self.mean_rewards = []
         self.mean_lengths = []
         
-        obs, _ = env.reset()
+        obs, info = env.reset()
+        
+        # Check if group is completed after reset
+        if info.get("group_completed", False):
+            logger.warning(f"Experiment group completed before training. Terminating training early.")
+            # Return empty results
+            return {
+                "episode_rewards": [],
+                "episode_lengths": [],
+                "actor_losses": [],
+                "critic_losses": [],
+                "total_losses": [],
+                "mean_rewards": [],
+                "mean_lengths": [],
+                "early_termination": True,
+                "completed_episodes": 0
+            }
+        
         episode_reward = 0
         episode_length = 0
         episode_num = 0
@@ -413,6 +430,18 @@ class TD3:
             action = self.select_action(obs)
             next_obs, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
+
+            # Check if group is completed during training
+            if info.get("group_completed", False):
+                logger.warning(f"Experiment group completed at step {t}, episode {episode_num + 1}. Terminating training early.")
+                # Save current episode before breaking
+                if episode_reward != 0:  # If episode started
+                    self.episode_rewards.append(episode_reward)
+                    self.episode_lengths.append(episode_length)
+                    self.actor_losses.append(0.0)
+                    self.critic_losses.append(0.0)
+                    self.total_losses.append(0.0)
+                break  # Exit training loop early
             
             # Store transition
             self.replay_buffer.append((obs, action, reward, next_obs, done))
@@ -495,13 +524,22 @@ class TD3:
                     })
                 
                 # Reset for next episode
-                obs, _ = env.reset()
+                obs, info = env.reset()
+                
+                # Check if group is completed after reset
+                if info.get("group_completed", False):
+                    logger.warning(f"Experiment group completed at episode {episode_num}. Terminating training early.")
+                    break
+                
                 episode_reward = 0
                 episode_length = 0
                 episode_latencies = []
                 
                 if episode_num >= total_episodes:
                     break
+
+        completed_episodes = len(self.episode_rewards)
+        early_termination = completed_episodes < total_episodes
 
         return {
             "episode_rewards": self.episode_rewards,
@@ -512,7 +550,9 @@ class TD3:
             "mean_rewards": self.mean_rewards,
             "mean_lengths": self.mean_lengths,
             "steps_to_convergence": steps_to_convergence,
-            "final_success_rate": np.mean(episode_success_counts) if episode_success_counts else 0.0
+            "final_success_rate": np.mean(episode_success_counts) if episode_success_counts else 0.0,
+            "early_termination": early_termination,  # Flag for early termination
+            "completed_episodes": completed_episodes  # Number of completed episodes
         }
     
     def save_model(self, path: str):

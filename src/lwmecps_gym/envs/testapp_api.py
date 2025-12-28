@@ -122,11 +122,19 @@ def get_metrics(group_id: str, base_url: str = "http://localhost:8001", timeout:
         if not isinstance(stats, dict):
             raise ValueError("Invalid response format")
         
+        # Read group state from API response
+        group_state = stats.get("state", "unknown")
+        
+        # Log warning if group is completed
+        if group_state == "completed":
+            logger.warning(f"Group {group_id} is completed. Metrics may be stale.")
+        
         # Process metrics
         metrics = {
             "group": {
                 "avg_latency": stats.get("average_latency", 0.0),
-                "concurrent_users": stats.get("total_requests", 0)
+                "concurrent_users": stats.get("total_requests", 0),
+                "state": group_state  # Add group state to metrics
             }
         }
         
@@ -145,7 +153,7 @@ def get_metrics(group_id: str, base_url: str = "http://localhost:8001", timeout:
         if not validate_metrics(metrics):
             raise ValueError("Invalid metrics format")
             
-        logger.info(f"Retrieved metrics for group {group_id}")
+        logger.info(f"Retrieved metrics for group {group_id} (state: {group_state})")
         return metrics
         
     except Timeout:

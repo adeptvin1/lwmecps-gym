@@ -170,17 +170,24 @@ class LWMECPSEnv3(gym.Env):
             if 'group' in metrics:
                 group_metrics = metrics['group']
                 latency = group_metrics.get('avg_latency', 0.0)
+                group_state = group_metrics.get('state', 'unknown')  # Read group state
+                
                 if latency < 0:
                     self.logger.warning(f"Received negative latency: {latency}, using 0.0")
                     latency = 0.0
                 for node in self.node_name:
                     self.state["nodes"][node]["avg_latency"] = float(latency)
+                
+                # Check if group is already completed at reset
+                if group_state == "completed":
+                    self.logger.warning(f"Experiment group {self.group_id} is already completed at reset. Returning completion flag.")
+                    return self.state, {"group_completed": True}
             
             # Set initial replicas to 1 for first deployment
             for node in self.node_name:
                 self.state["nodes"][node]["deployments"][self.deployments[0]]["Replicas"] = 1
             
-            return self.state, {}
+            return self.state, {"group_completed": False}  # Explicitly indicate group is not completed
             
         except Exception as e:
             self.logger.error(f"Failed to reset environment: {str(e)}")
@@ -281,25 +288,39 @@ class LWMECPSEnv3(gym.Env):
             self.logger.info(f"Waiting {self.stabilization_time} seconds for system stabilization...")
             time.sleep(self.stabilization_time)
             
-            # Get updated metrics
+            # Get updated metrics (single call, optimized)
             metrics = get_metrics(self.group_id, self.base_url)
             if 'group' in metrics:
                 group_metrics = metrics['group']
                 latency = group_metrics.get('avg_latency', 0.0)
+                group_state = group_metrics.get('state', 'unknown')  # Read group state
+                
                 if latency < 0:
                     self.logger.warning(f"Received negative latency: {latency}, using 0.0")
                     latency = 0.0
                 for node in self.node_name:
                     self.state["nodes"][node]["avg_latency"] = float(latency)
+                
+                # Check if group is completed
+                if group_state == "completed":
+                    self.logger.warning(f"Experiment group {self.group_id} is completed. Terminating episode.")
+                    # Return early termination flag
+                    info = {
+                        "latency": latency,
+                        "throughput": group_metrics.get("throughput", 0.0),
+                        "group_completed": True  # Flag for group completion
+                    }
+                    # Terminate episode early
+                    return self.state, self._calculate_reward(), True, True, info  # terminated=True, truncated=True
             
-            # Get metrics from the test application
-            metrics = get_metrics(self.group_id, self.base_url)
+            # Group is still running, continue normally
             latency = metrics["group"]["avg_latency"] if "group" in metrics and "avg_latency" in metrics["group"] else 0.0
-            throughput = metrics["group"]["throughput"] if "group" in metrics and "throughput" in metrics["group"] else 0.0
+            throughput = metrics["group"].get("throughput", 0.0)
 
             info = {
                 "latency": latency,
-                "throughput": throughput
+                "throughput": throughput,
+                "group_completed": False  # Explicitly indicate group is not completed
             }
 
             # Calculate reward

@@ -250,6 +250,12 @@ class HeuristicBaseline:
         
         for episode in range(total_episodes):
             observation, info = env.reset()
+            
+            # Check if group is completed after reset
+            if info.get("group_completed", False):
+                logger.warning(f"Experiment group completed before episode {episode + 1}. Terminating training early.")
+                break  # Exit training loop early
+            
             episode_reward = 0.0
             episode_length = 0
             episode_latency_sum = 0.0
@@ -264,6 +270,11 @@ class HeuristicBaseline:
                 
                 # Step environment
                 observation, reward, done, truncated, info = env.step(action)
+                
+                # Check if group is completed during episode
+                if info.get("group_completed", False):
+                    logger.warning(f"Experiment group completed at episode {episode + 1}. Terminating training early.")
+                    break  # Exit episode loop early
                 
                 episode_reward += reward
                 episode_length += 1
@@ -318,6 +329,26 @@ class HeuristicBaseline:
                 )
         
         # Return results in format compatible with RL agents
+        # Pad arrays to match total_episodes if training was terminated early
+        completed_episodes = len(episode_rewards)
+        if completed_episodes < total_episodes:
+            # Training was terminated early, pad with last values (or zeros if no episodes completed)
+            if completed_episodes > 0:
+                # Use last values if at least one episode was completed
+                last_reward = episode_rewards[-1]
+                last_length = episode_lengths[-1]
+                last_latency = episode_latencies[-1]
+            else:
+                # Use zeros if no episodes were completed
+                last_reward = 0.0
+                last_length = 0
+                last_latency = 0.0
+            
+            # Pad arrays to match expected length
+            episode_rewards.extend([last_reward] * (total_episodes - completed_episodes))
+            episode_lengths.extend([last_length] * (total_episodes - completed_episodes))
+            episode_latencies.extend([last_latency] * (total_episodes - completed_episodes))
+        
         results = {
             "episode_rewards": episode_rewards,
             "episode_lengths": episode_lengths,
@@ -328,6 +359,8 @@ class HeuristicBaseline:
             "actor_losses": [0.0] * total_episodes,
             "critic_losses": [0.0] * total_episodes,
             "total_losses": [0.0] * total_episodes,
+            "early_termination": completed_episodes < total_episodes,  # Flag for early termination
+            "completed_episodes": completed_episodes  # Number of completed episodes
         }
         
         logger.info(
