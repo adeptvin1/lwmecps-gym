@@ -5,7 +5,7 @@ import logging
 import time
 import re
 import bitmath
-from lwmecps_gym.envs.testapp_api import start_experiment_group, get_metrics
+from lwmecps_gym.envs.testapp_api import start_experiment_group, get_metrics, GroupAlreadyCompletedError
 from lwmecps_gym.envs.kubernetes_api import k8s
 
 # Resource metrics constants
@@ -127,8 +127,16 @@ class LWMECPSEnv3(gym.Env):
             
             # Start the experiment group
             self.logger.info(f"Starting experiment group {self.group_id}")
-            start_experiment_group(self.group_id, self.base_url)
-            self.logger.info(f"Successfully started experiment group {self.group_id}")
+            try:
+                started = start_experiment_group(self.group_id, self.base_url)
+                if started:
+                    self.logger.info(f"Successfully started experiment group {self.group_id}")
+                else:
+                    self.logger.warning(f"Experiment group {self.group_id} was not started (may be already running)")
+            except GroupAlreadyCompletedError:
+                # Группа уже завершена - это нормальная ситуация, проверяем статус и возвращаем флаг
+                self.logger.warning(f"Experiment group {self.group_id} is already completed. Checking status...")
+                # Продолжаем выполнение, чтобы получить метрики и вернуть флаг завершения
             
             # Get initial Kubernetes state
             k8s_state = self.minikube.k8s_state()

@@ -3,8 +3,8 @@ import os
 import logging
 import requests
 from typing import Dict, List, Union, Optional
-from requests.exceptions import RequestException, Timeout
-from tenacity import retry, stop_after_attempt, wait_exponential
+from requests.exceptions import RequestException, Timeout, HTTPError
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_not_exception_type
 
 
 def logging_config():
@@ -39,8 +39,22 @@ def validate_metrics(metrics: Dict[str, Dict[str, Union[float, int]]]) -> bool:
     return True
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-def start_experiment_group(group_id: str, base_url: str = "http://localhost:8001", timeout: int = 30) -> None:
+class GroupAlreadyCompletedError(Exception):
+    """Exception raised when trying to start an already completed group."""
+    pass
+
+
+class GroupAlreadyRunningError(Exception):
+    """Exception raised when trying to start an already running group."""
+    pass
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=4, max=10),
+    retry=retry_if_not_exception_type((GroupAlreadyCompletedError, GroupAlreadyRunningError))
+)
+def start_experiment_group(group_id: str, base_url: str = "http://localhost:8001", timeout: int = 30) -> bool:
     """
     Start an existing experiment group.
     
@@ -49,8 +63,13 @@ def start_experiment_group(group_id: str, base_url: str = "http://localhost:8001
         base_url (str): Base URL of the test application API
         timeout (int): Request timeout in seconds
         
+    Returns:
+        bool: True if group was started or is already running, False if group is already completed
+        
     Raises:
-        RequestException: If the request fails
+        GroupAlreadyCompletedError: If the group is already completed
+        GroupAlreadyRunningError: If the group is already running (non-fatal, returns True)
+        RequestException: If the request fails for other reasons
         ValueError: If group_id is invalid
     """
     logger = logging_config()
@@ -67,14 +86,67 @@ def start_experiment_group(group_id: str, base_url: str = "http://localhost:8001
             },
             timeout=timeout
         )
-        response.raise_for_status()
         
-        # Validate response
-        if response.status_code != 200:
-            raise RequestException(f"Unexpected status code: {response.status_code}")
+        # Обрабатываем успешный ответ (200)
+        if response.status_code == 200:
+            response_data = response.json()
+            message = response_data.get("message", "")
             
-        logger.info(f"Started experiment group {group_id}")
+            # Проверяем, не является ли это сообщением о том, что группа уже запущена
+            if "already running" in message.lower():
+                logger.info(f"Group {group_id} is already running. Continuing with existing group.")
+                return True
+            
+            logger.info(f"Started experiment group {group_id}")
+            return True
         
+        # Обрабатываем ошибку 400 (Bad Request)
+        if response.status_code == 400:
+            try:
+                error_detail = response.json().get("detail", "")
+                
+                # Группа уже завершена - это нормальная ситуация, не ошибка
+                if "already completed" in error_detail.lower():
+                    logger.warning(f"Group {group_id} is already completed. This is expected if group finished.")
+                    raise GroupAlreadyCompletedError(f"Group {group_id} is already completed")
+                
+                # Группа уже запущена - это тоже нормальная ситуация
+                if "already running" in error_detail.lower():
+                    logger.info(f"Group {group_id} is already running. Continuing with existing group.")
+                    raise GroupAlreadyRunningError(f"Group {group_id} is already running")
+                
+                # Другие ошибки 400 - пробрасываем как RequestException
+                raise RequestException(f"Bad request (400): {error_detail}")
+                
+            except (ValueError, KeyError) as parse_error:
+                # Не удалось распарсить JSON ответ
+                logger.warning(f"Could not parse error response: {parse_error}")
+                raise RequestException(f"Bad request (400): {response.text}")
+        
+        # Для других статусов используем стандартную обработку
+        response.raise_for_status()
+        return True
+        
+    except GroupAlreadyCompletedError:
+        # Пробрасываем специальное исключение для завершенной группы
+        raise
+    except GroupAlreadyRunningError:
+        # Группа уже запущена - это не ошибка, возвращаем True
+        return True
+    except HTTPError as e:
+        # Обрабатываем HTTP ошибки (кроме 400, которые уже обработаны выше)
+        if e.response is not None and e.response.status_code == 400:
+            try:
+                error_detail = e.response.json().get("detail", "")
+                if "already completed" in error_detail.lower():
+                    logger.warning(f"Group {group_id} is already completed.")
+                    raise GroupAlreadyCompletedError(f"Group {group_id} is already completed")
+                if "already running" in error_detail.lower():
+                    logger.info(f"Group {group_id} is already running.")
+                    return True
+            except (ValueError, KeyError):
+                pass
+        raise RequestException(f"HTTP error {e.response.status_code if e.response else 'unknown'}: {str(e)}")
     except Timeout:
         logger.error(f"Timeout while starting experiment group {group_id}")
         raise
