@@ -428,12 +428,13 @@ class DiscreteSAC:
         self.mean_rewards = []
         self.mean_lengths = []
 
+        # Explicitly start the workload before the training loop
+        if hasattr(env, 'start_workload'):
+            env.start_workload()
+
         obs, info = env.reset()
-        
-        # Check if group is completed after reset
-        if info.get("group_completed", False):
-            logger.warning(f"Experiment group completed before training. Terminating training early.")
-            # Return empty results
+        if info.get("group_completed"):
+            logger.info("Experiment group finished (detected at reset). Stopping training.")
             return {
                 "episode_rewards": [],
                 "episode_lengths": [],
@@ -443,10 +444,10 @@ class DiscreteSAC:
                 "total_losses": [],
                 "mean_rewards": [],
                 "mean_lengths": [],
-                "early_termination": True,
-                "completed_episodes": 0
+                "steps_to_convergence": None,
+                "final_success_rate": 0.0
             }
-        
+
         episode_reward = 0
         episode_length = 0
         episode_num = 0
@@ -463,18 +464,9 @@ class DiscreteSAC:
             next_obs, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
 
-            # Check if group is completed during training
-            if info.get("group_completed", False):
-                logger.warning(f"Experiment group completed at step {t}, episode {episode_num + 1}. Terminating training early.")
-                # Save current episode before breaking
-                if episode_reward != 0:  # If episode started
-                    self.episode_rewards.append(episode_reward)
-                    self.episode_lengths.append(episode_length)
-                    self.actor_losses.append(0.0)
-                    self.critic_losses.append(0.0)
-                    self.alpha_losses.append(0.0)
-                    self.total_losses.append(0.0)
-                break  # Exit training loop early
+            if info.get("group_completed"):
+                logger.info("Experiment group finished. Stopping training.")
+                done = True
 
             # Store transition
             self.replay_buffer.append((obs, action, reward, next_obs, done))
@@ -559,14 +551,17 @@ class DiscreteSAC:
                         "episode": episode_num
                     })
 
+                # Check if we should stop due to group completion
+                if info.get("group_completed"):
+                    break
+
                 # Reset for next episode
                 obs, info = env.reset()
                 
-                # Check if group is completed after reset
-                if info.get("group_completed", False):
-                    logger.warning(f"Experiment group completed at episode {episode_num}. Terminating training early.")
+                if info.get("group_completed"):
+                    logger.info("Experiment group finished (detected at reset). Stopping training.")
                     break
-                
+
                 episode_reward = 0
                 episode_length = 0
                 episode_latencies = []
@@ -574,9 +569,6 @@ class DiscreteSAC:
                 if episode_num >= total_episodes:
                     break
 
-        completed_episodes = len(self.episode_rewards)
-        early_termination = completed_episodes < total_episodes
-        
         return {
             "episode_rewards": self.episode_rewards,
             "episode_lengths": self.episode_lengths,
@@ -587,9 +579,7 @@ class DiscreteSAC:
             "mean_rewards": self.mean_rewards,
             "mean_lengths": self.mean_lengths,
             "steps_to_convergence": steps_to_convergence,
-            "final_success_rate": np.mean(episode_success_counts) if episode_success_counts else 0.0,
-            "early_termination": early_termination,  # Flag for early termination
-            "completed_episodes": completed_episodes  # Number of completed episodes
+            "final_success_rate": np.mean(episode_success_counts) if episode_success_counts else 0.0
         }
     
     def save_model(self, path: str):

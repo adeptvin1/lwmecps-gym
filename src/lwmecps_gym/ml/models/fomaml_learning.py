@@ -85,6 +85,10 @@ class FOMAMLAgent(MAMLAgent):
             # Create environment for this task
             env = env_factory(task)
             
+            # Explicitly start the workload
+            if hasattr(env, 'start_workload'):
+                env.start_workload()
+
             # Clone meta-model for task-specific adaptation
             adapted_model = copy.deepcopy(self.meta_model)
             
@@ -96,6 +100,10 @@ class FOMAMLAgent(MAMLAgent):
                 # Sample data from task
                 task_data = self._sample_task_data(env, adapted_model)
                 
+                if not task_data:
+                    logger.info("Experiment group completed. Stopping meta-gradient computation.")
+                    return None, []
+
                 # Compute task loss
                 task_loss = self._compute_task_loss(task_data, adapted_model)
                 
@@ -195,6 +203,10 @@ class FOMAMLAgent(MAMLAgent):
             # Compute meta-gradient using FOMAML
             meta_loss, adaptation_results = self._compute_meta_gradient(meta_batch, env_factory)
             
+            if meta_loss is None:
+                logger.info("Meta-gradient computation stopped. Finishing training.")
+                break
+
             # Compute gradient norm for monitoring
             total_norm = 0
             for param in self.meta_model.parameters():
@@ -321,6 +333,10 @@ class FOMAMLAgent(MAMLAgent):
             # Sample data from new task
             task_data = self._sample_task_data(env, adapted_model, num_samples=10)
             
+            if not task_data:
+                logger.info("Experiment group completed. Stopping adaptation.")
+                break
+
             # Compute loss
             loss = self._compute_task_loss(task_data, adapted_model)
             adaptation_losses.append(loss.item())
@@ -338,7 +354,8 @@ class FOMAMLAgent(MAMLAgent):
             
             logger.debug(f"FOMAML adaptation step {step + 1}: Loss={loss.item():.4f}")
         
-        logger.info(f"FOMAML task adaptation completed. Final loss: {adaptation_losses[-1]:.4f}")
+        final_loss = adaptation_losses[-1] if adaptation_losses else 0.0
+        logger.info(f"FOMAML task adaptation completed. Final loss: {final_loss:.4f}")
         return adapted_model
         
     def fast_adapt(
@@ -367,6 +384,11 @@ class FOMAMLAgent(MAMLAgent):
         
         # Single adaptation step with minimal data
         task_data = self._sample_task_data(env, adapted_model, num_samples=num_samples)
+        
+        if not task_data:
+            logger.info("Experiment group completed. Stopping fast adaptation.")
+            return adapted_model
+
         loss = self._compute_task_loss(task_data, adapted_model)
         
         # Single gradient step
@@ -473,6 +495,12 @@ class ImplicitFOMAMLAgent(FOMAMLAgent):
             # Create environment for this task
             env = env_factory(task)
             
+            # Explicitly start the workload
+            if hasattr(env, 'start_workload'):
+                env.start_workload()
+            elif hasattr(env, 'unwrapped') and hasattr(env.unwrapped, 'start_workload'):
+                env.unwrapped.start_workload()
+
             # Clone meta-model for task-specific adaptation
             adapted_model = copy.deepcopy(self.meta_model)
             
@@ -483,6 +511,10 @@ class ImplicitFOMAMLAgent(FOMAMLAgent):
                 # Sample data from task
                 task_data = self._sample_task_data(env, adapted_model)
                 
+                if not task_data:
+                    logger.info("Experiment group completed. Stopping meta-gradient computation.")
+                    return None, []
+
                 # Compute task loss
                 task_loss = self._compute_task_loss(task_data, adapted_model)
                 

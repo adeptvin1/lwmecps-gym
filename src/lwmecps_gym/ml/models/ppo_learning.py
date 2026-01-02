@@ -549,14 +549,17 @@ class PPO:
         convergence_achieved = False
         total_steps = 0
 
+        # Explicitly start the workload before the training loop
+        if hasattr(env, 'start_workload'):
+            env.start_workload()
+
         for episode in range(1, total_episodes + 1):
             obs, info = env.reset()
             
-            # Check if group is completed after reset
-            if info.get("group_completed", False):
-                logger.warning(f"Experiment group completed before episode {episode}. Terminating training early.")
-                break  # Exit training loop early
-            
+            if info.get("group_completed"):
+                logger.info("Experiment group finished (detected at reset). Stopping training.")
+                break
+
             done = False
             ep_reward = 0
             ep_len = 0
@@ -566,17 +569,10 @@ class PPO:
                 action, log_prob, value = self.select_action(obs)
                 next_obs, reward, terminated, truncated, info = env.step(action)
                 done = terminated or truncated
-
-                # Check if group is completed during episode
-                if info.get("group_completed", False):
-                    logger.warning(f"Experiment group completed at episode {episode}, step {total_steps}. Terminating training early.")
-                    # Save current episode before breaking
-                    if ep_reward != 0:  # If episode started
-                        episode_rewards.append(ep_reward)
-                        episode_lengths.append(ep_len)
-                        actor_losses.append(0.0)  # No update yet
-                        critic_losses.append(0.0)
-                    break  # Exit episode loop early
+                
+                if info.get("group_completed"):
+                    logger.info("Experiment group finished. Stopping training.")
+                    done = True
 
                 self.buffer.add(self._flatten_observation(obs), action, reward, value, log_prob, done)
                 obs = next_obs
@@ -588,8 +584,14 @@ class PPO:
                 if 'latency' in info:
                     ep_latencies.append(info['latency'])
 
+                if info.get("group_completed"):
+                    break
+
                 if done:
                     break
+            
+            if info.get("group_completed"):
+                break
 
             # Update the policy
             update_metrics = self.update()
@@ -669,13 +671,7 @@ class PPO:
                 except Exception as e:
                     logger.error(f"Failed to update progress for task {task_id}: {str(e)}")
 
-        completed_episodes = len(episode_rewards)
-        early_termination = completed_episodes < total_episodes
-        
-        if early_termination:
-            logger.warning(f"Training terminated early after {completed_episodes}/{total_episodes} episodes due to experiment group completion.")
-        else:
-            logger.info(f"Training finished after {total_episodes} episodes.")
+        logger.info(f"Training finished after {total_episodes} episodes.")
         
         # Calculate final metrics
         total_losses = [a + c for a, c in zip(actor_losses, critic_losses)]
@@ -691,9 +687,7 @@ class PPO:
             "mean_rewards": mean_rewards,
             "mean_lengths": mean_lengths,
             "steps_to_convergence": steps_to_convergence,
-            "final_success_rate": np.mean(episode_success_counts) if episode_success_counts else 0.0,
-            "early_termination": early_termination,  # Flag for early termination
-            "completed_episodes": completed_episodes  # Number of completed episodes
+            "final_success_rate": np.mean(episode_success_counts) if episode_success_counts else 0.0
         }
 
     def save_model(self, path: str):

@@ -2,7 +2,7 @@ import time
 import os
 import logging
 import requests
-from typing import Dict, List, Union, Optional
+from typing import Dict, List, Union, Optional, Any
 from requests.exceptions import RequestException, Timeout
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -14,12 +14,12 @@ def logging_config():
     return logger
 
 
-def validate_metrics(metrics: Dict[str, Dict[str, Union[float, int]]]) -> bool:
+def validate_metrics(metrics: Dict[str, Dict[str, Any]]) -> bool:
     """
     Validate metrics data structure and values.
     
     Args:
-        metrics (Dict[str, Dict[str, Union[float, int]]]): Metrics to validate
+        metrics (Dict[str, Dict[str, Any]]): Metrics to validate
         
     Returns:
         bool: True if metrics are valid, False otherwise
@@ -84,7 +84,7 @@ def start_experiment_group(group_id: str, base_url: str = "http://localhost:8001
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-def get_metrics(group_id: str, base_url: str = "http://localhost:8001", timeout: int = 30) -> Dict[str, Dict[str, Union[float, int]]]:
+def get_metrics(group_id: str, base_url: str = "http://localhost:8001", timeout: int = 30) -> Dict[str, Dict[str, Any]]:
     """
     Get metrics for the experiment group.
     
@@ -94,7 +94,7 @@ def get_metrics(group_id: str, base_url: str = "http://localhost:8001", timeout:
         timeout (int): Request timeout in seconds
         
     Returns:
-        Dict[str, Dict[str, Union[float, int]]]: Metrics for the group
+        Dict[str, Dict[str, Any]]: Metrics for the group
         
     Raises:
         RequestException: If the request fails
@@ -122,19 +122,12 @@ def get_metrics(group_id: str, base_url: str = "http://localhost:8001", timeout:
         if not isinstance(stats, dict):
             raise ValueError("Invalid response format")
         
-        # Read group state from API response
-        group_state = stats.get("state", "unknown")
-        
-        # Log warning if group is completed
-        if group_state == "completed":
-            logger.warning(f"Group {group_id} is completed. Metrics may be stale.")
-        
         # Process metrics
         metrics = {
             "group": {
                 "avg_latency": stats.get("average_latency", 0.0),
                 "concurrent_users": stats.get("total_requests", 0),
-                "state": group_state  # Add group state to metrics
+                "state": stats.get("state", "UNKNOWN")
             }
         }
         
@@ -153,7 +146,7 @@ def get_metrics(group_id: str, base_url: str = "http://localhost:8001", timeout:
         if not validate_metrics(metrics):
             raise ValueError("Invalid metrics format")
             
-        logger.info(f"Retrieved metrics for group {group_id} (state: {group_state})")
+        logger.info(f"Retrieved metrics for group {group_id}")
         return metrics
         
     except Timeout:

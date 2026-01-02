@@ -381,14 +381,17 @@ class DQNAgent:
         epsilon = epsilon_start
         episode_metrics = defaultdict(list)
         
+        # Explicitly start the workload before the training loop
+        if hasattr(env, 'start_workload'):
+            env.start_workload()
+
         for episode in range(num_episodes):
             state, info = env.reset()
             
-            # Check if group is completed after reset
-            if info.get("group_completed", False):
-                logger.warning(f"Experiment group completed before episode {episode + 1}. Terminating training early.")
-                break  # Exit training loop early
-            
+            if info.get("group_completed"):
+                logger.info("Experiment group finished (detected at reset). Stopping training.")
+                break
+
             total_reward = 0
             steps = 0
             self.metrics_collector.reset()
@@ -398,11 +401,10 @@ class DQNAgent:
                 next_state, reward, terminated, truncated, info = env.step(action)
                 done = terminated or truncated
                 
-                # Check if group is completed during episode
-                if info.get("group_completed", False):
-                    logger.warning(f"Experiment group completed at episode {episode + 1}, step {steps + 1}. Terminating training early.")
-                    break  # Exit episode loop early
-                
+                if info.get("group_completed"):
+                    logger.info("Experiment group finished. Stopping training.")
+                    done = True
+
                 self.replay_buffer.push(state, action, reward, next_state, done)
                 loss = self.train_step()
                 
@@ -414,6 +416,9 @@ class DQNAgent:
                 total_reward += reward
                 steps += 1
                 
+                if info.get("group_completed"):
+                    break
+
                 if done:
                     break
 
