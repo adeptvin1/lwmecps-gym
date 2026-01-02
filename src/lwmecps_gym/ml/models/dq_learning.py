@@ -384,6 +384,8 @@ class DQNAgent:
         # Explicitly start the workload before the training loop
         if hasattr(env, 'start_workload'):
             env.start_workload()
+        elif hasattr(env, 'unwrapped') and hasattr(env.unwrapped, 'start_workload'):
+            env.unwrapped.start_workload()
 
         for episode in range(num_episodes):
             state, info = env.reset()

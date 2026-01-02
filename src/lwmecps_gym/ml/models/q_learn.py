@@ -361,6 +361,8 @@ class QLearningAgent:
         # Explicitly start the workload before the training loop
         if hasattr(env, 'start_workload'):
             env.start_workload()
+        elif hasattr(env, 'unwrapped') and hasattr(env.unwrapped, 'start_workload'):
+            env.unwrapped.start_workload()
 
         for episode in range(num_episodes):
             logger.info(f"Starting episode {episode + 1}/{num_episodes}")
