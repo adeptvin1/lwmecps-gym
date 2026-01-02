@@ -174,6 +174,10 @@ class MAMLAgent:
             # Compute meta-gradient
             meta_loss, adaptation_results = self._compute_meta_gradient(meta_batch, env_factory)
             
+            if meta_loss is None:
+                logger.info("Meta-gradient computation stopped. Finishing training.")
+                break
+
             # Update meta-model
             self.meta_optimizer.zero_grad()
             meta_loss.backward()
@@ -259,6 +263,10 @@ class MAMLAgent:
                 # Sample data from task
                 task_data = self._sample_task_data(env, adapted_model)
                 
+                if not task_data:
+                    logger.info("Experiment group completed. Stopping meta-gradient computation.")
+                    return None, []
+
                 # Compute task loss
                 task_loss = self._compute_task_loss(task_data, adapted_model)
                 
@@ -287,7 +295,10 @@ class MAMLAgent:
         task_data = []
         
         for _ in range(num_samples):
-            obs, _ = env.reset()
+            obs, info = env.reset()
+            if info.get("group_completed"):
+                break
+
             done = False
             
             while not done:
@@ -298,6 +309,9 @@ class MAMLAgent:
                 next_obs, reward, terminated, truncated, info = env.step(action)
                 done = terminated or truncated
                 
+                if info.get("group_completed"):
+                    done = True
+
                 # Store experience
                 task_data.append({
                     "obs": obs,
@@ -309,6 +323,9 @@ class MAMLAgent:
                 })
                 
                 obs = next_obs
+
+                if info.get("group_completed"):
+                    break
         
         return task_data
         
@@ -372,7 +389,10 @@ class MAMLAgent:
         num_episodes = 5
         
         for _ in range(num_episodes):
-            obs, _ = env.reset()
+            obs, info = env.reset()
+            if info.get("group_completed"):
+                break
+
             episode_reward = 0
             done = False
             
@@ -381,8 +401,14 @@ class MAMLAgent:
                 next_obs, reward, terminated, truncated, info = env.step(action)
                 done = terminated or truncated
                 
+                if info.get("group_completed"):
+                    done = True
+
                 episode_reward += reward
                 obs = next_obs
+
+                if info.get("group_completed"):
+                    break
             
             total_reward += episode_reward
         

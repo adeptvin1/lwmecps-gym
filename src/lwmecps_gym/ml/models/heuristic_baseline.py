@@ -248,8 +248,17 @@ class HeuristicBaseline:
         episode_lengths = []
         episode_latencies = []
         
+        # Explicitly start the workload before the training loop
+        if hasattr(env, 'start_workload'):
+            env.start_workload()
+
         for episode in range(total_episodes):
             observation, info = env.reset()
+            
+            if info.get("group_completed"):
+                logger.info("Experiment group finished (detected at reset). Stopping baseline.")
+                break
+
             episode_reward = 0.0
             episode_length = 0
             episode_latency_sum = 0.0
@@ -265,6 +274,10 @@ class HeuristicBaseline:
                 # Step environment
                 observation, reward, done, truncated, info = env.step(action)
                 
+                if info.get("group_completed"):
+                    logger.info("Experiment group finished. Stopping baseline.")
+                    done = True
+
                 episode_reward += reward
                 episode_length += 1
                 
@@ -272,6 +285,12 @@ class HeuristicBaseline:
                 if "latency" in info:
                     episode_latency_sum += info["latency"]
                     episode_latency_count += 1
+                
+                if info.get("group_completed"):
+                    break
+            
+            if info.get("group_completed"):
+                break
             
             avg_latency = episode_latency_sum / episode_latency_count if episode_latency_count > 0 else 0.0
             

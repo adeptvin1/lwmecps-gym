@@ -358,9 +358,18 @@ class QLearningAgent:
             
         episode_metrics = defaultdict(list)
         
+        # Explicitly start the workload before the training loop
+        if hasattr(env, 'start_workload'):
+            env.start_workload()
+
         for episode in range(num_episodes):
             logger.info(f"Starting episode {episode + 1}/{num_episodes}")
-            state, _ = env.reset()
+            state, info = env.reset()
+            
+            if info.get("group_completed"):
+                logger.info("Experiment group finished (detected at reset). Stopping training.")
+                break
+
             total_reward = 0
             steps = 0
             self.metrics_collector.reset()
@@ -374,6 +383,10 @@ class QLearningAgent:
                 next_state, reward, terminated, truncated, info = env.step(action)
                 done = terminated or truncated
                 
+                if info.get("group_completed"):
+                    logger.info("Experiment group finished. Stopping training.")
+                    done = True
+
                 logger.info(f"Episode {episode + 1}, Step {steps + 1}: Reward: {reward}, Done: {done}")
                 logger.info(f"Episode {episode + 1}, Step {steps + 1}: Info: {info}")
                 
@@ -387,9 +400,15 @@ class QLearningAgent:
                 total_reward += reward
                 steps += 1
                 
+                if info.get("group_completed"):
+                    break
+
                 if done:
                     logger.info(f"Episode {episode + 1} completed: Steps: {steps}, Total reward: {total_reward:.2f}")
                     break
+            
+            if info.get("group_completed"):
+                break
             
             # Update exploration rate
             old_exploration_rate = self.exploration_rate

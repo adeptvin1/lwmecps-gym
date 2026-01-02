@@ -397,7 +397,25 @@ class TD3:
         self.mean_rewards = []
         self.mean_lengths = []
         
-        obs, _ = env.reset()
+        # Explicitly start the workload before the training loop
+        if hasattr(env, 'start_workload'):
+            env.start_workload()
+
+        obs, info = env.reset()
+        if info.get("group_completed"):
+            logger.info("Experiment group finished (detected at reset). Stopping training.")
+            return {
+                "episode_rewards": [],
+                "episode_lengths": [],
+                "actor_losses": [],
+                "critic_losses": [],
+                "total_losses": [],
+                "mean_rewards": [],
+                "mean_lengths": [],
+                "steps_to_convergence": None,
+                "final_success_rate": 0.0
+            }
+
         episode_reward = 0
         episode_length = 0
         episode_num = 0
@@ -414,6 +432,10 @@ class TD3:
             next_obs, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
             
+            if info.get("group_completed"):
+                logger.info("Experiment group finished. Stopping training.")
+                done = True
+
             # Store transition
             self.replay_buffer.append((obs, action, reward, next_obs, done))
             if len(self.replay_buffer) > self.max_buffer_size:
@@ -494,8 +516,17 @@ class TD3:
                         "episode": episode_num
                     })
                 
+                # Check if we should stop due to group completion
+                if info.get("group_completed"):
+                    break
+
                 # Reset for next episode
-                obs, _ = env.reset()
+                obs, info = env.reset()
+                
+                if info.get("group_completed"):
+                    logger.info("Experiment group finished (detected at reset). Stopping training.")
+                    break
+
                 episode_reward = 0
                 episode_length = 0
                 episode_latencies = []

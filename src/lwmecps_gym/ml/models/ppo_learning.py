@@ -549,8 +549,17 @@ class PPO:
         convergence_achieved = False
         total_steps = 0
 
+        # Explicitly start the workload before the training loop
+        if hasattr(env, 'start_workload'):
+            env.start_workload()
+
         for episode in range(1, total_episodes + 1):
             obs, info = env.reset()
+            
+            if info.get("group_completed"):
+                logger.info("Experiment group finished (detected at reset). Stopping training.")
+                break
+
             done = False
             ep_reward = 0
             ep_len = 0
@@ -560,6 +569,10 @@ class PPO:
                 action, log_prob, value = self.select_action(obs)
                 next_obs, reward, terminated, truncated, info = env.step(action)
                 done = terminated or truncated
+                
+                if info.get("group_completed"):
+                    logger.info("Experiment group finished. Stopping training.")
+                    done = True
 
                 self.buffer.add(self._flatten_observation(obs), action, reward, value, log_prob, done)
                 obs = next_obs
@@ -571,8 +584,14 @@ class PPO:
                 if 'latency' in info:
                     ep_latencies.append(info['latency'])
 
+                if info.get("group_completed"):
+                    break
+
                 if done:
                     break
+            
+            if info.get("group_completed"):
+                break
 
             # Update the policy
             update_metrics = self.update()

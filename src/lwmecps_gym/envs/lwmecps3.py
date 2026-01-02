@@ -113,6 +113,24 @@ class LWMECPSEnv3(gym.Env):
             self.logger.error(f"Failed to parse memory string '{memory_str}': {str(e)}")
             raise
 
+    def start_workload(self):
+        """Start the experiment group workload."""
+        self.logger.info(f"Starting experiment group {self.group_id}")
+        try:
+            start_experiment_group(self.group_id, self.base_url)
+            self.logger.info(f"Successfully started experiment group {self.group_id}")
+        except Exception as e:
+            self.logger.warning(f"start_experiment_group failed: {e}")
+            # Check if already completed
+            try:
+                metrics = get_metrics(self.group_id, self.base_url)
+                if 'group' in metrics and str(metrics['group'].get('state')).upper() == 'COMPLETED':
+                    self.logger.info(f"Group {self.group_id} is already COMPLETED.")
+                    return
+            except Exception:
+                pass
+            raise e
+
     def reset(self, seed=None, options=None) -> Tuple[Dict, Dict]:
         """Reset the environment to initial state."""
         super().reset(seed=seed)
@@ -125,12 +143,7 @@ class LWMECPSEnv3(gym.Env):
             if not self.node_name:
                 raise ValueError("node_name list cannot be empty")
             
-            # Start the experiment group
-            self.logger.info(f"Starting experiment group {self.group_id}")
-            start_experiment_group(self.group_id, self.base_url)
-            self.logger.info(f"Successfully started experiment group {self.group_id}")
-            
-            # Get initial Kubernetes state
+            # Get initial Kubernetes state first to construct valid state
             k8s_state = self.minikube.k8s_state()
             if not k8s_state:
                 raise ValueError("Failed to get initial Kubernetes state")
@@ -167,6 +180,12 @@ class LWMECPSEnv3(gym.Env):
             
             # Update state with initial metrics
             metrics = get_metrics(self.group_id, self.base_url)
+            
+            # Check for completion (optional here, but good for info)
+            info = {}
+            if 'group' in metrics and str(metrics['group'].get('state')).upper() == 'COMPLETED':
+                info["group_completed"] = True
+
             if 'group' in metrics:
                 group_metrics = metrics['group']
                 latency = group_metrics.get('avg_latency', 0.0)
@@ -180,7 +199,7 @@ class LWMECPSEnv3(gym.Env):
             for node in self.node_name:
                 self.state["nodes"][node]["deployments"][self.deployments[0]]["Replicas"] = 1
             
-            return self.state, {}
+            return self.state, info
             
         except Exception as e:
             self.logger.error(f"Failed to reset environment: {str(e)}")
@@ -283,6 +302,12 @@ class LWMECPSEnv3(gym.Env):
             
             # Get updated metrics
             metrics = get_metrics(self.group_id, self.base_url)
+            
+            # Check for completion
+            if 'group' in metrics and str(metrics['group'].get('state')).upper() == 'COMPLETED':
+                self.logger.info("Experiment group COMPLETED. Terminating episode.")
+                return self.state, 0.0, True, False, {"group_completed": True}
+            
             if 'group' in metrics:
                 group_metrics = metrics['group']
                 latency = group_metrics.get('avg_latency', 0.0)
@@ -292,8 +317,6 @@ class LWMECPSEnv3(gym.Env):
                 for node in self.node_name:
                     self.state["nodes"][node]["avg_latency"] = float(latency)
             
-            # Get metrics from the test application
-            metrics = get_metrics(self.group_id, self.base_url)
             latency = metrics["group"]["avg_latency"] if "group" in metrics and "avg_latency" in metrics["group"] else 0.0
             throughput = metrics["group"]["throughput"] if "group" in metrics and "throughput" in metrics["group"] else 0.0
 

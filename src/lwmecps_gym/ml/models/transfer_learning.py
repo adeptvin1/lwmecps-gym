@@ -147,7 +147,11 @@ class TransferLearningAgent(ABC):
         transfer_metrics = []
         
         for episode in range(total_episodes):
-            obs, _ = env.reset()
+            obs, info = env.reset()
+            if info.get("group_completed"):
+                logger.info("Experiment group finished (detected at reset). Stopping transfer learning.")
+                break
+
             episode_reward = 0
             episode_length = 0
             episode_losses = []
@@ -164,6 +168,10 @@ class TransferLearningAgent(ABC):
                 next_obs, reward, terminated, truncated, info = env.step(action.numpy())
                 done = terminated or truncated
                 
+                if info.get("group_completed"):
+                    logger.info("Experiment group finished. Stopping transfer learning.")
+                    done = True
+
                 # Store experience
                 episode_reward += reward
                 episode_length += 1
@@ -179,6 +187,12 @@ class TransferLearningAgent(ABC):
                     self.optimizer.step()
                 
                 obs = next_obs
+
+                if info.get("group_completed"):
+                    break
+            
+            if info.get("group_completed"):
+                break
                 
             # Store episode metrics
             episode_rewards.append(episode_reward)
