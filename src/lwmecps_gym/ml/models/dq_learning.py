@@ -382,13 +382,7 @@ class DQNAgent:
         episode_metrics = defaultdict(list)
         
         for episode in range(num_episodes):
-            state, info = env.reset()
-            
-            # Check if group is completed after reset
-            if info.get("group_completed", False):
-                logger.warning(f"Experiment group completed before episode {episode + 1}. Terminating training early.")
-                break  # Exit training loop early
-            
+            state, _ = env.reset()
             total_reward = 0
             steps = 0
             self.metrics_collector.reset()
@@ -397,11 +391,6 @@ class DQNAgent:
                 action = self.act(state, epsilon)
                 next_state, reward, terminated, truncated, info = env.step(action)
                 done = terminated or truncated
-                
-                # Check if group is completed during episode
-                if info.get("group_completed", False):
-                    logger.warning(f"Experiment group completed at episode {episode + 1}, step {steps + 1}. Terminating training early.")
-                    break  # Exit episode loop early
                 
                 self.replay_buffer.push(state, action, reward, next_state, done)
                 loss = self.train_step()

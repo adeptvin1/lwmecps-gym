@@ -287,12 +287,7 @@ class MAMLAgent:
         task_data = []
         
         for _ in range(num_samples):
-            obs, info = env.reset()
-            
-            # Check if group is completed after reset
-            if info.get("group_completed", False):
-                logger.warning(f"Experiment group completed before task. Terminating training early.")
-                break  # Exit training loop early
+            obs, _ = env.reset()
             done = False
             
             while not done:
@@ -302,11 +297,6 @@ class MAMLAgent:
                 # Take step
                 next_obs, reward, terminated, truncated, info = env.step(action)
                 done = terminated or truncated
-                
-                # Check if group is completed during task
-                if info.get("group_completed", False):
-                    logger.warning(f"Experiment group completed during task. Terminating training early.")
-                    break  # Exit task loop early
                 
                 # Store experience
                 task_data.append({
@@ -382,12 +372,7 @@ class MAMLAgent:
         num_episodes = 5
         
         for _ in range(num_episodes):
-            obs, info = env.reset()
-            
-            # Check if group is completed after reset
-            if info.get("group_completed", False):
-                logger.warning(f"Experiment group completed before task. Terminating training early.")
-                break  # Exit training loop early
+            obs, _ = env.reset()
             episode_reward = 0
             done = False
             
@@ -395,11 +380,6 @@ class MAMLAgent:
                 action = self._get_model_action(adapted_model, obs)
                 next_obs, reward, terminated, truncated, info = env.step(action)
                 done = terminated or truncated
-                
-                # Check if group is completed during task
-                if info.get("group_completed", False):
-                    logger.warning(f"Experiment group completed during task. Terminating training early.")
-                    break  # Exit task loop early
                 
                 episode_reward += reward
                 obs = next_obs
