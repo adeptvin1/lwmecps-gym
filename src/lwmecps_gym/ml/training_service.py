@@ -323,6 +323,17 @@ class TrainingService:
             )
             logger.info("Environment created successfully")
 
+            # Start the workload
+            try:
+                if hasattr(env.unwrapped, "start_workload"):
+                    logger.info("Starting workload via env.unwrapped.start_workload()")
+                    env.unwrapped.start_workload()
+                else:
+                    logger.warning("Environment unwrapped does not have start_workload method")
+            except Exception as e:
+                logger.error(f"Failed to start workload: {e}")
+                raise e
+
             # Get observation and action dimensions
             try:
                 # For LWMECPSEnv3, we need to calculate observation dimension manually
@@ -1091,6 +1102,17 @@ class TrainingService:
         )
         logger.info("Environment created successfully")
 
+        # Start the workload
+        try:
+            if hasattr(env.unwrapped, "start_workload"):
+                logger.info("Starting workload via env.unwrapped.start_workload()")
+                env.unwrapped.start_workload()
+            else:
+                logger.warning("Environment unwrapped does not have start_workload method")
+        except Exception as e:
+            logger.error(f"Failed to start workload: {e}")
+            raise e
+
         # Use dimensions from saved model instead of calculating from environment
         obs_dim = saved_obs_dim
         act_dim = saved_act_dim
@@ -1434,6 +1456,17 @@ class TrainingService:
             stabilization_time=task.stabilization_time
         )
         logger.info("Environment created successfully")
+
+        # Start the workload
+        try:
+            if hasattr(env.unwrapped, "start_workload"):
+                logger.info("Starting workload via env.unwrapped.start_workload()")
+                env.unwrapped.start_workload()
+            else:
+                logger.warning("Environment unwrapped does not have start_workload method")
+        except Exception as e:
+            logger.error(f"Failed to start workload: {e}")
+            raise e
 
         # Use dimensions from saved model instead of calculating from environment
         obs_dim = saved_obs_dim
