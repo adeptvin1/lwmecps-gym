@@ -157,7 +157,7 @@ def parse_log_file(log_path: str) -> Dict[str, List[Tuple[float, Dict]]]:
         print(f"Ошибка при чтении файла на строке {line_number}: {e}", file=sys.stderr)
         raise
     
-    # Нормализуем время для каждой группы: если эксперимент длится 86400 секунд,
+    # Нормализуем время для каждой группы: эксперимент всегда длится 86400 секунд,
     # распределяем события равномерно по этому времени
     experiment_duration = 86400.0  # 24 часа в секундах
     normalized_data = {}
@@ -166,26 +166,18 @@ def parse_log_file(log_path: str) -> Dict[str, List[Tuple[float, Dict]]]:
         if not group_data:
             continue
         
-        # Находим минимальное и максимальное время
-        times = [t for t, _ in group_data]
-        if not times:
+        num_events = len(group_data)
+        if num_events == 0:
             continue
         
-        min_time = min(times)
-        max_time = max(times)
-        
-        # Если есть маркер окончания эксперимента, используем его
-        if group_id in group_end_times and group_id in start_times:
-            max_time = group_end_times[group_id] - start_times[group_id]
-        
-        # Нормализуем время к 86400 секундам
+        # Распределяем события равномерно от 0 до 86400 секунд
         normalized_group_data = []
-        for time_val, metrics in group_data:
-            if max_time > min_time:
-                # Линейная интерполяция к experiment_duration
-                normalized_time = ((time_val - min_time) / (max_time - min_time)) * experiment_duration
+        for i, (time_val, metrics) in enumerate(group_data):
+            if num_events > 1:
+                # Равномерное распределение: первое событие = 0, последнее = 86400
+                normalized_time = (i / (num_events - 1)) * experiment_duration
             else:
-                normalized_time = time_val
+                normalized_time = 0.0
             
             normalized_time = min(normalized_time, experiment_duration)
             normalized_group_data.append((normalized_time, metrics))
