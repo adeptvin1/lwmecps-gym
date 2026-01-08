@@ -6,6 +6,7 @@ This module provides non-learning baseline strategies for comparison with RL alg
 - Static: Uses fixed replica count
 - Greedy Latency: Places replicas on nodes with minimum latency
 - Greedy Load: Places replicas on nodes with minimum load
+- Optimized Balance: Maximizes reward by finding optimal replica count (uses same reward formula as RL)
 """
 
 import numpy as np
@@ -35,7 +36,7 @@ class HeuristicBaseline:
         Initialize heuristic baseline.
         
         Args:
-            heuristic_type: Type of heuristic ("uniform", "static", "greedy_latency", "greedy_load")
+            heuristic_type: Type of heuristic ("uniform", "static", "greedy_latency", "greedy_load", "optimized_balance")
             num_deployments: Number of deployments to manage
             max_replicas: Maximum number of replicas per deployment
             static_replicas: Fixed number of replicas for static heuristic
@@ -124,6 +125,8 @@ class HeuristicBaseline:
                 return self._greedy_latency_action(observation, node_names, node_states)
             elif self.heuristic_type == "greedy_load":
                 return self._greedy_load_action(observation, node_names, node_states)
+            elif self.heuristic_type == "optimized_balance":
+                return self._optimized_balance_action(observation, node_names, node_states)
             else:
                 raise ValueError(f"Unknown heuristic type: {self.heuristic_type}")
         except Exception as e:
@@ -222,6 +225,97 @@ class HeuristicBaseline:
             action[i] = min(self.static_replicas, self.max_replicas)
         
         return action
+    
+    def _optimized_balance_action(
+        self,
+        observation: Dict,
+        node_names: List[str],
+        node_states: Dict[str, Dict]
+    ) -> np.ndarray:
+        """
+        Optimized balance: maximizes reward by finding optimal replica count.
+        Uses the same reward formula as RL: reward = -alpha * latency - beta * replicas - gamma * imbalance
+        
+        This heuristic tries different replica counts and selects the one that maximizes
+        the expected reward based on current latency and estimated latency reduction.
+        
+        Args:
+            observation: Current state observation
+            node_names: List of node names
+            node_states: Dictionary of node states
+            
+        Returns:
+            Action array with optimal replica counts
+        """
+        # Reward parameters (same as in environment)
+        alpha = 1.0  # Weight for latency
+        beta = 0.1   # Weight for total replicas
+        gamma = 0.1  # Weight for imbalance
+        
+        # Get current average latency from state
+        avg_latency = sum(
+            node_states[node].get("avg_latency", 0.0)
+            for node in node_names
+        ) / len(node_names) if node_names else 0.0
+        
+        # Get current total replicas from observation
+        current_total_replicas = 0
+        if "nodes" in observation:
+            for node_name in node_names:
+                if node_name in observation["nodes"]:
+                    node_data = observation["nodes"][node_name]
+                    deployments = node_data.get("deployments", {})
+                    for deployment_name in deployments:
+                        current_total_replicas += deployments[deployment_name].get("Replicas", 0)
+        
+        # Try different replica counts and find the one that maximizes reward
+        # Model: latency decreases with more replicas, but with diminishing returns
+        # Formula: estimated_latency = base_latency / (1 + k * replicas)
+        # where k is a scaling factor
+        
+        best_replicas_per_deployment = 1
+        best_reward = float('-inf')
+        best_estimated_latency = avg_latency
+        
+        # Base latency when no replicas (high)
+        base_latency = max(avg_latency, 100.0)  # Minimum base latency
+        # Scaling factor for latency reduction (empirical: more replicas = less latency)
+        k = 0.1  # Each replica reduces latency by ~10% of base
+        
+        for replicas_per_deployment in range(1, self.max_replicas + 1):
+            total_replicas = replicas_per_deployment * self.num_deployments
+            
+            # Estimate latency: decreases with more replicas, but with diminishing returns
+            # Using inverse relationship: latency = base_latency / (1 + k * total_replicas)
+            # But also consider current latency as baseline
+            if current_total_replicas > 0:
+                # Scale from current latency based on replica ratio
+                replica_ratio = total_replicas / max(current_total_replicas, 1)
+                estimated_latency = avg_latency / max(1.0, replica_ratio * 0.8)  # 20% reduction per doubling
+            else:
+                # No current replicas, use base model
+                estimated_latency = base_latency / (1 + k * total_replicas)
+            
+            # Ensure latency doesn't go below reasonable minimum
+            estimated_latency = max(30.0, estimated_latency)
+            
+            # Calculate resource imbalance (simplified: assume uniform distribution minimizes imbalance)
+            # For uniform distribution across nodes, imbalance is minimal
+            imbalance = 0.0  # Simplified: assume uniform distribution
+            
+            # Calculate reward using the same formula as environment
+            reward = -alpha * estimated_latency - beta * total_replicas - gamma * imbalance
+            
+            if reward > best_reward:
+                best_reward = reward
+                best_replicas_per_deployment = replicas_per_deployment
+                best_estimated_latency = estimated_latency
+        
+        logger.debug(f"Optimized balance: selected {best_replicas_per_deployment} replicas per deployment "
+                    f"(reward={best_reward:.2f}, current_latency={avg_latency:.2f} ms, "
+                    f"estimated_latency={best_estimated_latency:.2f} ms)")
+        
+        return np.array([best_replicas_per_deployment] * self.num_deployments, dtype=np.int32)
     
     def train(
         self,

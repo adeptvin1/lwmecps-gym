@@ -54,9 +54,9 @@ coverage.xml
 cover/
 
 # Logs
-*.log
-logs/
-log/
+# *.log
+# logs/
+# log/
 
 # Local development
 .env.local
