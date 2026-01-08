@@ -33,11 +33,14 @@ def parse_log_file(log_path: str) -> Dict[str, List[Tuple[float, Dict]]]:
     node_names_pattern = re.compile(r"Successfully collected state for nodes: \[(.*?)\]")
     replicas_pattern = re.compile(r'Updated deployment (lwmecps-testapp-server-\w+) to (\d+) replicas')
     setting_replicas_pattern = re.compile(r'Setting (?:initial )?replicas to (\d+) for deployment (lwmecps-testapp-server-\w+)')
+    completed_pattern = re.compile(r'Experiment group COMPLETED|Terminating episode')
     
     # Для отслеживания текущей группы и состояния подов
     current_group_id = None
     current_nodes = {}  # {group_id: список нод}
     current_replicas = defaultdict(dict)  # {group_id: {deployment: replicas}}
+    experiment_duration = 86400.0  # Длительность эксперимента в секундах (24 часа)
+    group_end_times = {}  # {group_id: время окончания эксперимента}
     
     try:
         with open(log_path, 'r', encoding='utf-8') as f:
@@ -78,6 +81,13 @@ def parse_log_file(log_path: str) -> Dict[str, List[Tuple[float, Dict]]]:
                     if 'lwmecps-testapp-server' in deployment:
                         current_replicas[current_group_id][deployment] = replicas
                 
+                # Ищем завершение эксперимента
+                completed_match = completed_pattern.search(line_stripped)
+                if completed_match and current_group_id:
+                    # Эксперимент завершился в 86400 секунд от начала
+                    if current_group_id in start_times:
+                        group_end_times[current_group_id] = start_times[current_group_id] + experiment_duration
+                
                 # Ищем получение метрик - это момент, когда нужно записать состояние
                 metrics_match = metrics_retrieved_pattern.search(line_stripped)
                 if metrics_match:
@@ -86,7 +96,18 @@ def parse_log_file(log_path: str) -> Dict[str, List[Tuple[float, Dict]]]:
                         start_times[group_id] = current_time
                     
                     # Вычисляем относительное время
+                    # Если известна длительность эксперимента, нормализуем время
                     relative_time = current_time - start_times[group_id]
+                    
+                    # Если эксперимент завершился, используем нормализованное время до 86400
+                    if group_id in group_end_times:
+                        # Линейная интерполяция: текущее время относительно начала и конца
+                        elapsed = current_time - start_times[group_id]
+                        total_duration = group_end_times[group_id] - start_times[group_id]
+                        if total_duration > 0:
+                            # Нормализуем к 86400 секундам
+                            relative_time = (elapsed / total_duration) * experiment_duration
+                            relative_time = min(relative_time, experiment_duration)
                     
                     # Вычисляем количество подов на каждой ноде на основе replicas deployment'ов
                     pods_per_node = {}
@@ -136,7 +157,42 @@ def parse_log_file(log_path: str) -> Dict[str, List[Tuple[float, Dict]]]:
         print(f"Ошибка при чтении файла на строке {line_number}: {e}", file=sys.stderr)
         raise
     
-    return dict(data)
+    # Нормализуем время для каждой группы: если эксперимент длится 86400 секунд,
+    # распределяем события равномерно по этому времени
+    experiment_duration = 86400.0  # 24 часа в секундах
+    normalized_data = {}
+    
+    for group_id, group_data in data.items():
+        if not group_data:
+            continue
+        
+        # Находим минимальное и максимальное время
+        times = [t for t, _ in group_data]
+        if not times:
+            continue
+        
+        min_time = min(times)
+        max_time = max(times)
+        
+        # Если есть маркер окончания эксперимента, используем его
+        if group_id in group_end_times and group_id in start_times:
+            max_time = group_end_times[group_id] - start_times[group_id]
+        
+        # Нормализуем время к 86400 секундам
+        normalized_group_data = []
+        for time_val, metrics in group_data:
+            if max_time > min_time:
+                # Линейная интерполяция к experiment_duration
+                normalized_time = ((time_val - min_time) / (max_time - min_time)) * experiment_duration
+            else:
+                normalized_time = time_val
+            
+            normalized_time = min(normalized_time, experiment_duration)
+            normalized_group_data.append((normalized_time, metrics))
+        
+        normalized_data[group_id] = normalized_group_data
+    
+    return normalized_data
 
 
 def extract_experiment_info(log_path: str) -> Dict[str, Dict]:
