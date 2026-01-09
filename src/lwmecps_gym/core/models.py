@@ -109,7 +109,7 @@ class ReconciliationTask(BaseModel):
     id: Optional[PyObjectId] = Field(default=None, alias="_id")
     name: str
     description: Optional[str] = None
-    training_task_id: PyObjectId = Field(description="ID исходной задачи обучения")
+    training_task_id: Optional[PyObjectId] = Field(default=None, description="ID исходной задачи обучения (опционально, если модель загружается из wandb)")
     model_type: ModelType = Field(description="Тип модели (ppo, sac, td3, dqn)")
     state: TrainingState = TrainingState.PENDING
     created_at: datetime = Field(default_factory=datetime.utcnow)

@@ -856,6 +856,167 @@ class TrainingService:
         
         return await self.db.create_reconciliation_task(reconciliation_task)
     
+    async def create_reconciliation_task_from_wandb(
+        self, 
+        wandb_run_id: str,
+        artifact_name: Optional[str] = None,
+        sample_size: int = 100,
+        group_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        max_pods: Optional[int] = None,
+        base_url: Optional[str] = None,
+        stabilization_time: Optional[int] = None
+    ) -> ReconciliationTask:
+        """
+        Create a reconciliation task from a wandb artifact without requiring a training task in DB.
+        
+        Args:
+            wandb_run_id: WandB run ID where the model artifact is stored
+            artifact_name: Optional artifact name. If not provided, will search for model artifacts
+            sample_size: Number of steps to perform
+            group_id: Optional experiment group ID
+            namespace: Optional namespace (defaults to "lwmecps-testapp")
+            max_pods: Optional max pods (defaults to 50)
+            base_url: Optional base URL (defaults to "http://34.51.217.76:8001")
+            stabilization_time: Optional stabilization time (defaults to 10)
+            
+        Returns:
+            Created ReconciliationTask instance
+        """
+        import wandb
+        from wandb import Api
+        
+        logger.info(f"Creating reconciliation task from wandb run {wandb_run_id}")
+        
+        # Initialize wandb API
+        api = Api()
+        
+        # Get the run
+        try:
+            project_name = self.wandb_config.project_name
+            entity = self.wandb_config.entity
+            if entity:
+                run_path = f"{entity}/{project_name}/{wandb_run_id}"
+            else:
+                run_path = f"{project_name}/{wandb_run_id}"
+            
+            logger.info(f"Fetching wandb run: {run_path}")
+            run = api.run(run_path)
+        except Exception as e:
+            raise ValueError(f"Failed to fetch wandb run {wandb_run_id}: {str(e)}")
+        
+        # Find model artifact
+        artifacts = list(run.logged_artifacts())
+        model_artifact = None
+        
+        if artifact_name:
+            # Try to find artifact by exact name
+            for art in artifacts:
+                if art.name == artifact_name and art.type == 'model':
+                    model_artifact = art
+                    break
+        else:
+            # Find first model artifact
+            for art in artifacts:
+                if art.type == 'model':
+                    model_artifact = art
+                    break
+        
+        if not model_artifact:
+            raise ValueError(f"Model artifact not found in wandb run {wandb_run_id}. Available artifacts: {[a.name for a in artifacts]}")
+        
+        logger.info(f"Found model artifact: {model_artifact.name}")
+        
+        # Download artifact
+        artifact_dir = model_artifact.download()
+        logger.info(f"Artifact downloaded to: {artifact_dir}")
+        
+        # Get artifact metadata
+        metadata = model_artifact.metadata or {}
+        logger.info(f"Artifact metadata: {metadata}")
+        
+        # Extract model type from metadata or artifact name
+        model_type_str = metadata.get('model_type', '')
+        if not model_type_str:
+            # Try to infer from artifact name
+            if 'ppo' in model_artifact.name.lower():
+                model_type_str = 'ppo'
+            elif 'sac' in model_artifact.name.lower():
+                model_type_str = 'sac'
+            elif 'td3' in model_artifact.name.lower():
+                model_type_str = 'td3'
+            elif 'dqn' in model_artifact.name.lower():
+                model_type_str = 'dqn'
+            elif 'q_learning' in model_artifact.name.lower() or 'q-learning' in model_artifact.name.lower():
+                model_type_str = 'q_learning'
+            else:
+                raise ValueError(f"Could not determine model type from artifact {model_artifact.name}. Please specify artifact_name or ensure metadata contains model_type.")
+        
+        try:
+            model_type = ModelType(model_type_str)
+        except ValueError:
+            raise ValueError(f"Invalid model type: {model_type_str}. Supported types: {[e.value for e in ModelType]}")
+        
+        # Find model file in artifact directory
+        model_files = []
+        for root, dirs, files in os.walk(artifact_dir):
+            for file in files:
+                if file.endswith('.pth') or file.endswith('.pt'):
+                    model_files.append(os.path.join(root, file))
+        
+        if not model_files:
+            raise ValueError(f"No model file (.pth or .pt) found in artifact {model_artifact.name}")
+        
+        model_path = model_files[0]  # Use first model file found
+        if len(model_files) > 1:
+            logger.warning(f"Multiple model files found, using: {model_path}")
+        
+        logger.info(f"Using model file: {model_path}")
+        
+        # Load checkpoint to verify and extract dimensions
+        try:
+            checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
+            saved_obs_dim = checkpoint.get('obs_dim')
+            saved_act_dim = checkpoint.get('act_dim')
+            if saved_obs_dim is None or saved_act_dim is None:
+                logger.warning(f"Model checkpoint missing obs_dim or act_dim, will use defaults")
+        except Exception as e:
+            logger.warning(f"Could not load checkpoint to verify dimensions: {e}")
+        
+        # Extract parameters from metadata or use defaults
+        env_config = metadata.get('env_config', {})
+        parameters = metadata.get('parameters', {})
+        
+        # Use provided values or defaults from metadata or hardcoded defaults
+        reconciliation_group_id = group_id if group_id is not None else f"reconciliation-wandb-{wandb_run_id}-{uuid.uuid4()}"
+        namespace_val = namespace if namespace is not None else env_config.get('namespace', 'lwmecps-testapp')
+        max_pods_val = max_pods if max_pods is not None else env_config.get('max_pods', 50)
+        base_url_val = base_url if base_url is not None else env_config.get('base_url', 'http://34.51.217.76:8001')
+        stabilization_time_val = stabilization_time if stabilization_time is not None else env_config.get('stabilization_time', 10)
+        
+        # Copy model to local models directory for consistency
+        os.makedirs("./models", exist_ok=True)
+        local_model_path = f"./models/wandb_model_{model_type.value}_{wandb_run_id}.pth"
+        import shutil
+        shutil.copy2(model_path, local_model_path)
+        logger.info(f"Model copied to local path: {local_model_path}")
+        
+        reconciliation_task = ReconciliationTask(
+            name=f"Reconciliation from WandB {wandb_run_id}",
+            description=f"Reconciliation task for model from wandb run {wandb_run_id}, artifact {model_artifact.name}",
+            training_task_id=None,  # No training task in DB
+            model_type=model_type,
+            total_steps=sample_size,
+            group_id=reconciliation_group_id,
+            namespace=namespace_val,
+            max_pods=max_pods_val,
+            base_url=base_url_val,
+            stabilization_time=stabilization_time_val,
+            model_path=local_model_path
+        )
+        
+        return await self.db.create_reconciliation_task(reconciliation_task)
+    
     async def start_reconciliation_task(self, task_id: str) -> Optional[ReconciliationTask]:
         """
         Start a reconciliation task.
@@ -913,29 +1074,32 @@ class TrainingService:
             task_id_obj = ObjectId(task_id)
             logger.info(f"Starting reconciliation process for task {task_id}")
             
-            # Get the original training task
+            # Get the original training task if available
             training_task = None
-            training_task_future = asyncio.run_coroutine_threadsafe(
-                db_thread.get_training_task(str(task.training_task_id)), 
-                loop
-            )
-            training_task = training_task_future.result()
-            
-            if not training_task:
-                raise ValueError(f"Training task {task.training_task_id} not found")
-            
-            # Continue with the existing reconciliation logic...
-            # Load saved model parameters
-            if not training_task.model_path:
-                training_task.model_path = f"./models/model_{training_task.model_type.value}_{training_task.id}.pth"
-                logger.info(f"Generated model_path for reconciliation: {training_task.model_path}")
+            if task.training_task_id:
+                training_task_future = asyncio.run_coroutine_threadsafe(
+                    db_thread.get_training_task(str(task.training_task_id)), 
+                    loop
+                )
+                training_task = training_task_future.result()
                 
-            if not os.path.exists(training_task.model_path):
-                raise ValueError(f"Model file not found: {training_task.model_path}")
+                if not training_task:
+                    logger.warning(f"Training task {task.training_task_id} not found, proceeding without it")
+            
+            # Determine model path
+            model_path = task.model_path
+            if not model_path:
+                if training_task:
+                    model_path = training_task.model_path or f"./models/model_{training_task.model_type.value}_{training_task.id}.pth"
+                else:
+                    raise ValueError("Model path not specified in reconciliation task and no training task available")
+            
+            if not os.path.exists(model_path):
+                raise ValueError(f"Model file not found: {model_path}")
             
             # Load model checkpoint to get dimensions
-            logger.info(f"Loading checkpoint from: {training_task.model_path}")
-            checkpoint = torch.load(training_task.model_path, map_location="cpu", weights_only=False)
+            logger.info(f"Loading checkpoint from: {model_path}")
+            checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
             logger.info(f"Checkpoint keys: {list(checkpoint.keys())}")
             
             saved_obs_dim = checkpoint.get('obs_dim')
@@ -952,9 +1116,33 @@ class TrainingService:
             logger.info(f"Loaded deployments: {saved_deployments}")
             logger.info(f"Loaded max_replicas: {saved_max_replicas}")
 
+            # Create a minimal training_task-like object if not available
+            if not training_task:
+                from types import SimpleNamespace
+                # Try to extract parameters from checkpoint metadata
+                checkpoint_params = {}
+                try:
+                    checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
+                    # Some checkpoints may have parameters stored
+                    if 'parameters' in checkpoint:
+                        checkpoint_params = checkpoint.get('parameters', {})
+                except:
+                    pass
+                
+                training_task = SimpleNamespace(
+                    model_type=task.model_type,
+                    parameters=checkpoint_params,  # Use parameters from checkpoint if available
+                    namespace=task.namespace,
+                    max_pods=task.max_pods,
+                    base_url=task.base_url,
+                    stabilization_time=task.stabilization_time,
+                    env_config={},
+                    model_path=model_path
+                )
+
             result = self._perform_reconciliation(
                 training_task, task, saved_obs_dim, saved_act_dim, 
-                saved_deployments, saved_max_replicas, training_task.model_path,
+                saved_deployments, saved_max_replicas, model_path,
                 db_thread, loop, task_id
             )
             
@@ -986,7 +1174,7 @@ class TrainingService:
                 asyncio.run_coroutine_threadsafe(db_thread.close(), loop)
             finish_wandb()
 
-    def _perform_reconciliation(self, training_task: TrainingTask, reconciliation_task: ReconciliationTask, 
+    def _perform_reconciliation(self, training_task: Any, reconciliation_task: ReconciliationTask, 
                                saved_obs_dim: int, saved_act_dim: int, saved_deployments: List[str], 
                                saved_max_replicas: int, model_path: str, db_thread, loop, task_id: str) -> ReconciliationResult:
         """
@@ -1086,8 +1274,11 @@ class TrainingService:
         
         # Create environment for reconciliation
         logger.info("Creating environment")
+        env_config_dict = getattr(training_task, 'env_config', {}) or {}
+        if not isinstance(env_config_dict, dict):
+            env_config_dict = {}
         env = gym.make(
-            training_task.env_config.get("env_name", "lwmecps-v3"),
+            env_config_dict.get("env_name", "lwmecps-v3"),
             node_name=list(node_info.keys()),
             max_hardware=max_hardware,
             pod_usage=pod_usage,
@@ -1117,30 +1308,38 @@ class TrainingService:
         obs_dim = saved_obs_dim
         act_dim = saved_act_dim
 
+        # Get parameters safely (works with both TrainingTask and SimpleNamespace)
+        params = getattr(training_task, 'parameters', {}) or {}
+        if not isinstance(params, dict):
+            params = {}
+        
+        # Get model type safely
+        model_type = getattr(training_task, 'model_type', reconciliation_task.model_type)
+        
         # Create agent with correct parameters
         agent = None
-        if training_task.model_type == ModelType.PPO:
+        if model_type == ModelType.PPO:
             # Use max_replicas from environment to ensure consistency
             max_replicas = get_env_max_replicas(env)
             logger.info(f"Creating PPO agent with max_replicas={max_replicas} (from environment)")
             agent = PPO(
                 obs_dim=obs_dim,
                 act_dim=act_dim,
-                hidden_size=training_task.parameters.get("hidden_size", 256),
-                lr=training_task.parameters.get("learning_rate", 3e-4),
-                gamma=training_task.parameters.get("discount_factor", 0.99),
-                lam=training_task.parameters.get("lambda", 0.95),
-                clip_eps=training_task.parameters.get("clip_epsilon", 0.2),
-                ent_coef=training_task.parameters.get("entropy_coef", 0.01),
-                vf_coef=training_task.parameters.get("value_function_coef", 0.5),
-                n_steps=training_task.parameters.get("n_steps", 2048),
-                batch_size=training_task.parameters.get("batch_size", 64),
-                n_epochs=training_task.parameters.get("n_epochs", 10),
-                device=training_task.parameters.get("device", "cpu"),
+                hidden_size=params.get("hidden_size", 256),
+                lr=params.get("learning_rate", 3e-4),
+                gamma=params.get("discount_factor", 0.99),
+                lam=params.get("lambda", 0.95),
+                clip_eps=params.get("clip_epsilon", 0.2),
+                ent_coef=params.get("entropy_coef", 0.01),
+                vf_coef=params.get("value_function_coef", 0.5),
+                n_steps=params.get("n_steps", 2048),
+                batch_size=params.get("batch_size", 64),
+                n_epochs=params.get("n_epochs", 10),
+                device=params.get("device", "cpu"),
                 deployments=saved_deployments,
                 max_replicas=max_replicas
             )
-        elif training_task.model_type == ModelType.SAC:
+        elif model_type == ModelType.SAC:
             # Use max_replicas from environment to ensure consistency
             # The environment calculates it based on hardware constraints
             max_replicas = get_env_max_replicas(env)
@@ -1148,58 +1347,59 @@ class TrainingService:
             agent = SAC(
                 obs_dim=obs_dim,
                 act_dim=act_dim,
-                hidden_size=training_task.parameters.get("hidden_size", 256),
-                lr=training_task.parameters.get("learning_rate", 3e-4),
-                gamma=training_task.parameters.get("discount_factor", 0.99),
-                tau=training_task.parameters.get("tau", 0.005),
-                alpha=training_task.parameters.get("alpha", 0.2),
-                auto_entropy=training_task.parameters.get("auto_entropy", True),
-                target_entropy=training_task.parameters.get("target_entropy", -1.0),
-                batch_size=training_task.parameters.get("batch_size", 256),
-                device=training_task.parameters.get("device", "cpu"),
+                hidden_size=params.get("hidden_size", 256),
+                lr=params.get("learning_rate", 3e-4),
+                gamma=params.get("discount_factor", 0.99),
+                tau=params.get("tau", 0.005),
+                alpha=params.get("alpha", 0.2),
+                auto_entropy=params.get("auto_entropy", True),
+                target_entropy=params.get("target_entropy", -1.0),
+                batch_size=params.get("batch_size", 256),
+                device=params.get("device", "cpu"),
                 deployments=saved_deployments,
                 max_replicas=max_replicas
             )
-        elif training_task.model_type == ModelType.TD3:
+        elif model_type == ModelType.TD3:
             # Use max_replicas from environment to ensure consistency
             max_replicas = get_env_max_replicas(env)
             logger.info(f"Creating TD3 agent with max_replicas={max_replicas} (from environment)")
             agent = TD3(
                 obs_dim=obs_dim,
                 act_dim=act_dim,
-                hidden_size=training_task.parameters.get("hidden_size", 256),
-                lr=training_task.parameters.get("learning_rate", 3e-4),
-                gamma=training_task.parameters.get("discount_factor", 0.99),
-                tau=training_task.parameters.get("tau", 0.005),
-                policy_delay=training_task.parameters.get("policy_delay", 2),
-                noise_clip=training_task.parameters.get("noise_clip", 0.5),
-                noise=training_task.parameters.get("noise", 0.2),
-                batch_size=training_task.parameters.get("batch_size", 256),
-                device=training_task.parameters.get("device", "cpu"),
+                hidden_size=params.get("hidden_size", 256),
+                lr=params.get("learning_rate", 3e-4),
+                gamma=params.get("discount_factor", 0.99),
+                tau=params.get("tau", 0.005),
+                policy_delay=params.get("policy_delay", 2),
+                noise_clip=params.get("noise_clip", 0.5),
+                noise=params.get("noise", 0.2),
+                batch_size=params.get("batch_size", 256),
+                device=params.get("device", "cpu"),
                 deployments=saved_deployments,
                 max_replicas=max_replicas
             )
-        elif training_task.model_type == ModelType.Q_LEARNING:
+        elif model_type == ModelType.Q_LEARNING:
             agent = QLearningAgent(
-                learning_rate=training_task.parameters.get("learning_rate", 0.1),
-                discount_factor=training_task.parameters.get("discount_factor", 0.95),
-                exploration_rate=training_task.parameters.get("exploration_rate", 1.0),
-                exploration_decay=training_task.parameters.get("exploration_decay", 0.995),
-                min_exploration_rate=training_task.parameters.get("min_exploration_rate", 0.01),
-                max_states=training_task.parameters.get("max_states", 10000)
+                learning_rate=params.get("learning_rate", 0.1),
+                discount_factor=params.get("discount_factor", 0.95),
+                exploration_rate=params.get("exploration_rate", 1.0),
+                exploration_decay=params.get("exploration_decay", 0.995),
+                min_exploration_rate=params.get("min_exploration_rate", 0.01),
+                max_states=params.get("max_states", 10000)
             )
-        elif training_task.model_type == ModelType.DQN:
+        elif model_type == ModelType.DQN:
             agent = DQNAgent(
                 env,
-                learning_rate=training_task.parameters.get("learning_rate", 0.001),
-                discount_factor=training_task.parameters.get("discount_factor", 0.99),
-                epsilon=training_task.parameters.get("epsilon", 0.1),
-                memory_size=training_task.parameters.get("memory_size", 10000),
-                batch_size=training_task.parameters.get("batch_size", 32)
+                learning_rate=params.get("learning_rate", 0.001),
+                discount_factor=params.get("discount_factor", 0.99),
+                epsilon=params.get("epsilon", 0.1),
+                memory_size=params.get("memory_size", 10000),
+                batch_size=params.get("batch_size", 32)
             )
 
         if agent is None:
-            raise ValueError(f"Unknown model type: {training_task.model_type}")
+            model_type_val = getattr(training_task, 'model_type', reconciliation_task.model_type)
+            raise ValueError(f"Unknown model type: {model_type_val}")
 
         # Load trained model
         agent.load_model(model_path)
@@ -1214,10 +1414,11 @@ class TrainingService:
 
         for step in range(reconciliation_task.total_steps):
             # Handle different agent types' select_action return values
-            if training_task.model_type == ModelType.PPO:
+            model_type = getattr(training_task, 'model_type', reconciliation_task.model_type)
+            if model_type == ModelType.PPO:
                 # PPO returns (action, log_prob, value)
                 action, log_prob, value = agent.select_action(obs)
-            elif training_task.model_type in [ModelType.Q_LEARNING, ModelType.DQN]:
+            elif model_type in [ModelType.Q_LEARNING, ModelType.DQN]:
                 # Q-learning and DQN use choose_action method
                 action = agent.choose_action(obs)
             else:
@@ -1298,8 +1499,8 @@ class TrainingService:
         })
         
         result = ReconciliationResult(
-            task_id=reconciliation_task.training_task_id,
-            model_type=training_task.model_type,
+            task_id=str(reconciliation_task.training_task_id) if reconciliation_task.training_task_id else "wandb-reconciliation",
+            model_type=reconciliation_task.model_type,
             wandb_run_id=wandb.run.id,
             metrics=metrics,
             sample_size=reconciliation_task.total_steps,
