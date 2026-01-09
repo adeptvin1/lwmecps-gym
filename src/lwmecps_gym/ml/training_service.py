@@ -1107,12 +1107,33 @@ class TrainingService:
             saved_deployments = checkpoint.get('deployments', [])
             saved_max_replicas = checkpoint.get('max_replicas', 10)
             
+            # Extract hidden_size from checkpoint if available, or infer from network structure
+            saved_hidden_size = checkpoint.get('hidden_size')
+            if saved_hidden_size is None:
+                # Try to infer from actor network structure
+                if 'actor' in checkpoint:
+                    actor_state = checkpoint['actor']
+                    # Look for first linear layer weight (net.0.weight)
+                    if 'net.0.weight' in actor_state:
+                        # Shape is [hidden_size, obs_dim]
+                        saved_hidden_size = actor_state['net.0.weight'].shape[0]
+                        logger.info(f"Inferred hidden_size={saved_hidden_size} from actor network structure")
+                elif 'model_state_dict' in checkpoint:
+                    # For PPO/TD3 models
+                    model_state = checkpoint['model_state_dict']
+                    # Look for first layer weight
+                    for key in model_state.keys():
+                        if 'net.0.weight' in key or 'actor.net.0.weight' in key:
+                            saved_hidden_size = model_state[key].shape[0]
+                            logger.info(f"Inferred hidden_size={saved_hidden_size} from model structure")
+                            break
+            
             logger.info(f"Raw saved_deployments: {saved_deployments} (type: {type(saved_deployments)})")
             
             if saved_obs_dim is None or saved_act_dim is None:
                 raise ValueError("Model checkpoint missing required dimensions")
             
-            logger.info(f"Loaded model dimensions: obs_dim={saved_obs_dim}, act_dim={saved_act_dim}")
+            logger.info(f"Loaded model dimensions: obs_dim={saved_obs_dim}, act_dim={saved_act_dim}, hidden_size={saved_hidden_size}")
             logger.info(f"Loaded deployments: {saved_deployments}")
             logger.info(f"Loaded max_replicas: {saved_max_replicas}")
 
@@ -1122,10 +1143,13 @@ class TrainingService:
                 # Try to extract parameters from checkpoint metadata
                 checkpoint_params = {}
                 try:
-                    checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
+                    # Checkpoint already loaded above, reuse it
                     # Some checkpoints may have parameters stored
                     if 'parameters' in checkpoint:
                         checkpoint_params = checkpoint.get('parameters', {})
+                    # Add hidden_size to params if we extracted it
+                    if saved_hidden_size is not None:
+                        checkpoint_params['hidden_size'] = saved_hidden_size
                 except:
                     pass
                 
@@ -1142,7 +1166,7 @@ class TrainingService:
 
             result = self._perform_reconciliation(
                 training_task, task, saved_obs_dim, saved_act_dim, 
-                saved_deployments, saved_max_replicas, model_path,
+                saved_deployments, saved_max_replicas, saved_hidden_size, model_path,
                 db_thread, loop, task_id
             )
             
@@ -1176,7 +1200,7 @@ class TrainingService:
 
     def _perform_reconciliation(self, training_task: Any, reconciliation_task: ReconciliationTask, 
                                saved_obs_dim: int, saved_act_dim: int, saved_deployments: List[str], 
-                               saved_max_replicas: int, model_path: str, db_thread, loop, task_id: str) -> ReconciliationResult:
+                               saved_max_replicas: int, saved_hidden_size: Optional[int], model_path: str, db_thread, loop, task_id: str) -> ReconciliationResult:
         """
         Perform the actual reconciliation process.
         """
@@ -1313,6 +1337,10 @@ class TrainingService:
         if not isinstance(params, dict):
             params = {}
         
+        # Use hidden_size from checkpoint if available, otherwise from params, otherwise default
+        hidden_size = saved_hidden_size if saved_hidden_size is not None else params.get("hidden_size", 256)
+        logger.info(f"Using hidden_size={hidden_size} (from checkpoint: {saved_hidden_size}, from params: {params.get('hidden_size')}, default: 256)")
+        
         # Get model type safely
         model_type = getattr(training_task, 'model_type', reconciliation_task.model_type)
         
@@ -1325,7 +1353,7 @@ class TrainingService:
             agent = PPO(
                 obs_dim=obs_dim,
                 act_dim=act_dim,
-                hidden_size=params.get("hidden_size", 256),
+                hidden_size=hidden_size,
                 lr=params.get("learning_rate", 3e-4),
                 gamma=params.get("discount_factor", 0.99),
                 lam=params.get("lambda", 0.95),
@@ -1347,7 +1375,7 @@ class TrainingService:
             agent = SAC(
                 obs_dim=obs_dim,
                 act_dim=act_dim,
-                hidden_size=params.get("hidden_size", 256),
+                hidden_size=hidden_size,
                 lr=params.get("learning_rate", 3e-4),
                 gamma=params.get("discount_factor", 0.99),
                 tau=params.get("tau", 0.005),
@@ -1366,7 +1394,7 @@ class TrainingService:
             agent = TD3(
                 obs_dim=obs_dim,
                 act_dim=act_dim,
-                hidden_size=params.get("hidden_size", 256),
+                hidden_size=hidden_size,
                 lr=params.get("learning_rate", 3e-4),
                 gamma=params.get("discount_factor", 0.99),
                 tau=params.get("tau", 0.005),
