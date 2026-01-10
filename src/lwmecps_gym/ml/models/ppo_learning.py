@@ -276,6 +276,7 @@ class PPO:
     ):
         self.obs_dim = obs_dim
         self.act_dim = act_dim
+        self.hidden_size = hidden_size
         self.lr = lr
         self.gamma = gamma
         self.lam = lam
@@ -705,6 +706,7 @@ class PPO:
                 'optimizer_state_dict': self.optimizer.state_dict(),
                 'obs_dim': self.obs_dim,
                 'act_dim': self.act_dim,
+                'hidden_size': self.hidden_size,
                 'deployments': self.deployments,
                 'max_replicas': self.max_replicas
             }, path)
@@ -721,13 +723,64 @@ class PPO:
             path (str): Path to saved model
         """
         try:
-            checkpoint = torch.load(path)
-            self.model.load_state_dict(checkpoint['model_state_dict'])
-            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            self.obs_dim = checkpoint['obs_dim']
-            self.act_dim = checkpoint['act_dim']
-            self.deployments = checkpoint['deployments']
-            self.max_replicas = checkpoint['max_replicas']
+            checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+            model_state = checkpoint.get('model_state_dict')
+            if model_state is None:
+                raise KeyError("Checkpoint missing 'model_state_dict'")
+
+            ckpt_obs_dim = checkpoint.get('obs_dim', self.obs_dim)
+            ckpt_act_dim = checkpoint.get('act_dim', self.act_dim)
+            ckpt_deployments = checkpoint.get('deployments', self.deployments)
+            ckpt_max_replicas = checkpoint.get('max_replicas', self.max_replicas)
+
+            # Prefer explicit hidden_size; otherwise infer from PPO ActorCritic first linear layer
+            ckpt_hidden_size = checkpoint.get('hidden_size')
+            if ckpt_hidden_size is None:
+                for key, tensor in model_state.items():
+                    if key.endswith('actor.0.weight') or 'actor.0.weight' in key:
+                        ckpt_hidden_size = tensor.shape[0]
+                        break
+                    if key.endswith('critic.0.weight') or 'critic.0.weight' in key:
+                        ckpt_hidden_size = tensor.shape[0]
+                        break
+
+            if ckpt_hidden_size is None:
+                raise RuntimeError(
+                    "Could not determine hidden_size from checkpoint. "
+                    "Please re-save the model with 'hidden_size' in the checkpoint."
+                )
+
+            # Update metadata first
+            self.obs_dim = ckpt_obs_dim
+            self.act_dim = ckpt_act_dim
+            self.hidden_size = ckpt_hidden_size
+            self.deployments = ckpt_deployments
+            self.max_replicas = ckpt_max_replicas
+
+            # Recreate model if architecture does not match checkpoint
+            needs_rebuild = True
+            try:
+                # Compare expected first-layer shape
+                cur_w = dict(self.model.state_dict()).get('actor.0.weight')
+                ckpt_w = model_state.get('actor.0.weight')
+                if cur_w is not None and ckpt_w is not None and tuple(cur_w.shape) == tuple(ckpt_w.shape):
+                    needs_rebuild = False
+            except Exception:
+                needs_rebuild = True
+
+            if needs_rebuild:
+                self.model = ActorCritic(self.obs_dim, self.act_dim, self.hidden_size, self.max_replicas).to(self.device)
+                self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
+
+            self.model.load_state_dict(model_state)
+
+            # Optimizer state may be absent or incompatible; load best-effort
+            opt_state = checkpoint.get('optimizer_state_dict')
+            if opt_state is not None:
+                try:
+                    self.optimizer.load_state_dict(opt_state)
+                except Exception as opt_e:
+                    logger.warning(f"Could not load optimizer state (continuing): {opt_e}")
             logger.info(f"Model loaded from {path}")
         except Exception as e:
             logger.error(f"Error loading model: {str(e)}")

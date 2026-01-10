@@ -1118,15 +1118,44 @@ class TrainingService:
                         # Shape is [hidden_size, obs_dim]
                         saved_hidden_size = actor_state['net.0.weight'].shape[0]
                         logger.info(f"Inferred hidden_size={saved_hidden_size} from actor network structure")
+                    elif '0.weight' in actor_state:
+                        # Some implementations use a plain Sequential without a 'net.' prefix
+                        saved_hidden_size = actor_state['0.weight'].shape[0]
+                        logger.info(f"Inferred hidden_size={saved_hidden_size} from actor network structure (0.weight)")
                 elif 'model_state_dict' in checkpoint:
                     # For PPO/TD3 models
                     model_state = checkpoint['model_state_dict']
                     # Look for first layer weight
-                    for key in model_state.keys():
+                    for key, tensor in model_state.items():
+                        # TD3/SAC-style networks
                         if 'net.0.weight' in key or 'actor.net.0.weight' in key:
-                            saved_hidden_size = model_state[key].shape[0]
-                            logger.info(f"Inferred hidden_size={saved_hidden_size} from model structure")
+                            saved_hidden_size = tensor.shape[0]
+                            logger.info(f"Inferred hidden_size={saved_hidden_size} from model structure ({key})")
                             break
+                        # PPO ActorCritic uses nn.Sequential under 'actor'/'critic' directly:
+                        # actor.0.weight / critic.0.weight
+                        if key.endswith('actor.0.weight') or 'actor.0.weight' in key:
+                            saved_hidden_size = tensor.shape[0]
+                            logger.info(f"Inferred hidden_size={saved_hidden_size} from PPO ActorCritic ({key})")
+                            break
+                        if key.endswith('critic.0.weight') or 'critic.0.weight' in key:
+                            saved_hidden_size = tensor.shape[0]
+                            logger.info(f"Inferred hidden_size={saved_hidden_size} from PPO ActorCritic ({key})")
+                            break
+            
+            if saved_hidden_size is None:
+                # For NN-based policies, silently falling back to defaults defeats the purpose of reconciliation.
+                # Fail fast with a clear message to force a 1:1 architecture restore.
+                if task.model_type in (ModelType.PPO, ModelType.TD3, ModelType.SAC):
+                    raise ValueError(
+                        "Checkpoint does not contain 'hidden_size' and it could not be inferred from 'model_state_dict'. "
+                        "Reconciliation requires exact architecture match. "
+                        "Please re-save the model checkpoint including 'hidden_size' (and ideally 'max_replicas')."
+                    )
+                logger.warning(
+                    "Could not infer hidden_size from checkpoint (non-NN model type); continuing without it. "
+                    f"Available keys: {list(checkpoint.keys())}"
+                )
             
             logger.info(f"Raw saved_deployments: {saved_deployments} (type: {type(saved_deployments)})")
             
