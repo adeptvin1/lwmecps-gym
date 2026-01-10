@@ -149,6 +149,53 @@ async def create_reconciliation_task(
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
+@router.post("/reconciliation-tasks/from-wandb", response_model=ReconciliationTask)
+async def create_reconciliation_task_from_wandb(
+    wandb_run_id: str = Query(..., description="WandB run ID where the model artifact is stored"),
+    artifact_name: Optional[str] = Query(None, description="Optional artifact name. If not provided, will search for model artifacts"),
+    sample_size: int = Query(100, description="Количество шагов для выполнения reconciliation", ge=1),
+    group_id: Optional[str] = Query(None, description="ID группы экспериментов для reconciliation"),
+    namespace: Optional[str] = Query(None, description="Kubernetes namespace"),
+    max_pods: Optional[int] = Query(None, description="Maximum number of pods"),
+    base_url: Optional[str] = Query(None, description="Base URL for test application"),
+    stabilization_time: Optional[int] = Query(None, description="Stabilization time in seconds"),
+    service: TrainingService = Depends(get_training_service)
+):
+    """
+    Создание задачи reconciliation из WandB артефакта без необходимости наличия записи тренинга в БД
+    
+    Создает задачу reconciliation для проверки работы модели, загруженной из WandB.
+    Полезно когда модель была обучена на другой VM с другой MongoDB.
+    
+    Args:
+        wandb_run_id: WandB run ID где хранится артефакт модели
+        artifact_name: Опциональное имя артефакта. Если не указано, будет найден первый model артефакт
+        sample_size: Количество шагов для выполнения
+        group_id: Опциональный ID группы экспериментов
+        namespace: Опциональный Kubernetes namespace
+        max_pods: Опциональное максимальное количество подов
+        base_url: Опциональный базовый URL
+        stabilization_time: Опциональное время стабилизации в секундах
+        
+    Returns:
+        Созданная задача reconciliation
+    """
+    try:
+        return await service.create_reconciliation_task_from_wandb(
+            wandb_run_id=wandb_run_id,
+            artifact_name=artifact_name,
+            sample_size=sample_size,
+            group_id=group_id,
+            namespace=namespace,
+            max_pods=max_pods,
+            base_url=base_url,
+            stabilization_time=stabilization_time
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create reconciliation task from wandb: {str(e)}")
+
 # Reconciliation Tasks Management
 @router.get("/reconciliation-tasks", response_model=List[ReconciliationTask])
 async def list_reconciliation_tasks(
